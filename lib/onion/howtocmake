@@ -1,0 +1,4 @@
+# I took the onion library, and made it with this cmake. 
+# I then trimmed off the parts we didn't need in mister
+# I also commented out some of the files we can't build with #if 0, maybe I should remove them
+cmake .. -DCMAKE_TOOLCHAIN_FILE=../arm2.txt

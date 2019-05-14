@@ -31,6 +31,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "input.h"
 #include "fpga_io.h"
 #include "scheduler.h"
+#include "web.h"
 
 const char *version = "$VER:" VDATE;
 
@@ -67,8 +68,12 @@ int main(int argc, char *argv[])
 	FindStorage();	
 	user_io_init((argc > 1) ? argv[1] : "");
 
+	web_setup();
+
+
 	scheduler_init();
 	scheduler_run();
+	web_cleanup();
 
 	return 0;
 }

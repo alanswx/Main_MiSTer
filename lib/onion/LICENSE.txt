@@ -1,0 +1,5 @@
+Onion is licensed under both GPLv2+ and Apache 2. See APACHE2.txt and GPLv2.txt
+files for more details.
+
+The GPLv2+ compatibility is needed as Apache 2 is not compatible with
+GPLv2: http://www.gnu.org/licenses/license-list.html#apache2
