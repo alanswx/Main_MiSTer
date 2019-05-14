@@ -59,9 +59,13 @@ int screenshot(void *p, onion_request * req, onion_response * res) {
     return OCS_PROCESSED;
 
   int result = getScreenshotBuf(&buf,&outsize);
+  fprintf(stdout,"screenshot: result: %d \n",result);
+  if (result==0 && buf && outsize)
+  {
   ssize_t size= onion_response_write(res, (const char*)buf,outsize);
   free(buf);
   fprintf(stdout,"screenshot: result: %d size: %d\n",result,size);
+  }
   return OCS_PROCESSED;
 
 }
