@@ -11,8 +11,14 @@
 #include <netdb.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include <onion/onion.h>
+#include <onion/handlers/exportlocal.h>
+#include <onion/dict.h>
+#include <onion/shortcuts.h>
+#include <onion/block.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +28,72 @@ int screenshot(void *p, onion_request * req, onion_response * res);
 #ifdef __cplusplus
 }
 #endif
+
+
+/**
+ * @short Serves a directory listing.
+ * 
+ * It checks if the given request is a directory listing and processes it, or fallbacks to the
+ * next handler.
+ */
+
+int filesearch(void *p, onion_request * req, onion_response * res) {
+  	const char *path=onion_request_get_queryd(req,"name","boot.rom");
+  	const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
+  	const char *output=onion_request_get_queryd(req,"output","json");
+
+  onion_response_set_header(res, "Content-Type", "text/json");
+
+    char *realp = realpath(path, NULL);
+    if (!realp)
+      return OCS_INTERNAL_ERROR;
+
+    DIR *dir = opendir(realp);
+    if (dir) {                  // its a dir, fill the dictionary.
+      onion_dict *d = onion_dict_new();
+      onion_dict_add(d, "dirname", path, 0);
+      if (path[0] != '\0' && path[1] != '\0')
+        onion_dict_add(d, "go_up", "true", 0);
+      onion_dict *files = onion_dict_new();
+      onion_dict_add(d, "files", files, OD_DICT | OD_FREE_VALUE);
+
+      struct dirent *de;
+      while ((de = readdir(dir))) {     // Fill one files.[filename] per file.
+        onion_dict *file = onion_dict_new();
+        onion_dict_add(files, de->d_name, file,
+                       OD_DUP_KEY | OD_DICT | OD_FREE_VALUE);
+
+        onion_dict_add(file, "name", de->d_name, OD_DUP_VALUE);
+
+        char tmp[256];
+        snprintf(tmp, sizeof(tmp), "%s/%s", realp, de->d_name);
+        struct stat st;
+        stat(tmp, &st);
+
+        snprintf(tmp, sizeof(tmp), "%d", (int)st.st_size);
+        onion_dict_add(file, "size", tmp, OD_DUP_VALUE);
+
+        snprintf(tmp, sizeof(tmp), "%d", st.st_uid);
+        onion_dict_add(file, "owner", tmp, OD_DUP_VALUE);
+
+        if (S_ISDIR(st.st_mode))
+          onion_dict_add(file, "type", "dir", 0);
+        else
+          onion_dict_add(file, "type", "file", 0);
+      }
+      closedir(dir);
+
+      onion_block *jresb = onion_dict_to_json(d);
+      onion_response_write(res, onion_block_data(jresb), onion_block_size(jresb));
+    onion_block_free(jresb);
+    onion_dict_free(d);
+
+    }
+    free(realp);
+    return OCS_PROCESSED;
+  }
+
+
 
 
 int getScreenshotBuf(unsigned char **buf,unsigned int *outsize)
@@ -136,17 +208,30 @@ int web_setup()
 {
 //  ONION_VERSION_IS_COMPATIBLE_OR_ABORT();
 
-
   o = onion_new(O_POOL);
   onion_set_timeout(o, 5000);
   onion_set_hostname(o, "0.0.0.0");
   onion_url *urls = onion_root_url(o);
 
   onion_url_add_static(urls, "static", "Hello static world", HTTP_OK);
-  onion_url_add(urls, "screenshot", (void *)screenshot);
-  onion_url_add(urls, "loadcore", (void *)loadcore);
-  onion_url_add(urls, "getconfig", (void *)getconfig);
-  onion_url_add(urls, "loadfile", (void *)loadfile);
+  onion_url_add(urls, "^api/screenshot", (void *)screenshot);
+  onion_url_add(urls, "^api/loadcore", (void *)loadcore);
+  onion_url_add(urls, "^api/getconfig", (void *)getconfig);
+  onion_url_add(urls, "^api/loadfile", (void *)loadfile);
+  onion_url_add(urls, "^api/filesearch", (void *)filesearch);
+  onion_url_add(urls, "^api/(.*)$", (void *)hello);
+  onion_url_add_handler(urls, "^static/", onion_handler_export_local_new("html"));
+  //onion_url_add_with_data(urls, "static/", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
+  onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
+  //onion_url_add_handler(urls, "^(.*)$", onion_handler_export_local_new("html"));
+  //onion_url_add_with_data(urls, "", onion_shortcut_internal_redirect,
+   //                       "html/index.html", NULL);
+
+  //onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
+  //onion_url_add_handler(urls, "^(.*)$", onion_handler_export_local_new("html"));
+
+
+
   onion_url_add(urls, "", (void *)hello);
   onion_url_add(urls, "^(.*)$", (void *)hello);
 

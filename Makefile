@@ -36,6 +36,9 @@ LODEPNG_SRC	= lib/lodepng/lodepng.cpp
 MINIZ_SRC	= $(wildcard ./lib/miniz/*.c)
 ONION_SRC	= $(wildcard ./lib/onion/src/onion/*.c)
 ONION_SRC	+= $(wildcard ./lib/onion/src/bindings/*.cpp)
+ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/exportlocal.c)
+ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/static.c)
+
 #./lib/onion/src/onion/dir/codecs.c.o
 #./lib/onion/src/onion/dir/dict.c.o
 #./lib/onion/src/onion/dir/low.c.o
