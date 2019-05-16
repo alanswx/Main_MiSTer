@@ -68,10 +68,10 @@ int main(int argc, char *argv[])
 	FindStorage();	
 	user_io_init((argc > 1) ? argv[1] : "");
 
-	web_setup();
 
 
 	scheduler_init();
+	web_setup();
 	scheduler_run();
 	web_cleanup();
 

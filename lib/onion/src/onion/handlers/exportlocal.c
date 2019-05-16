@@ -185,20 +185,27 @@ int onion_handler_export_local_directory(onion_handler_export_local_data * data,
   struct dirent *fi;
   struct stat st;
   char temp[1024];
-  struct passwd *pwd;
+  struct passwd *pwd=NULL;
   while ((fi = readdir(dir)) != NULL) {
     if (fi->d_name[0] == '.')
       continue;
     snprintf(temp, sizeof(temp), "%s/%s", realp, fi->d_name);
-    stat(temp, &st);
-    pwd = getpwuid(st.st_uid);
+    int sres=stat(temp, &st);
+    // AJS - pwd stuff is causing crashes, not sure why
+    //pwd = getpwuid(st.st_uid);
 
-    if (S_ISDIR(st.st_mode))
-      onion_response_printf(res, "  ['%s/',%ld,'%s','dir'],\n", fi->d_name,
-                            st.st_size, pwd ? pwd->pw_name : "???");
-    else
-      onion_response_printf(res, "  ['%s',%ld,'%s','file'],\n", fi->d_name,
-                            st.st_size, pwd ? pwd->pw_name : "???");
+    if (S_ISDIR(st.st_mode)) {
+      //onion_response_printf(res, "  ['%s/',%ld,'%s','dir'],\n", fi->d_name,
+      //                      st.st_size, pwd ? pwd->pw_name : "???");
+      onion_response_printf(res, "  ['%s/',%ld,'dir'],\n", fi->d_name,
+                            st.st_size);
+  }
+    else {
+      //onion_response_printf(res, "  ['%s',%ld,'%s','file'],\n", fi->d_name,
+      //                      st.st_size, pwd ? pwd->pw_name : "???");
+      onion_response_printf(res, "  ['%s',%ld,'file'],\n", fi->d_name,
+                            st.st_size);
+      }
   }
 
   onion_response_write0(res, "  [] ]\n</script>\n");

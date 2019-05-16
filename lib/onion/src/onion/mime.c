@@ -108,6 +108,9 @@ static void onion_mime_fill() {
     onion_dict_add(onion_mime_dict, "css", "text/css", 0);
     onion_dict_add(onion_mime_dict, "png", "image/png", 0);
     onion_dict_add(onion_mime_dict, "jpg", "image/jpeg", 0);
+    //onion_dict_add(onion_mime_dict, "json", "application/json", 0);
+    onion_dict_add(onion_mime_dict, "json", "application/json; charset=UTF-8", 0);
+  ONION_WARNING("I know %d mime types", onion_dict_count(onion_mime_dict));
     return;
   }
   char mimetype[128];

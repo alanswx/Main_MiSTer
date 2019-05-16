@@ -39,33 +39,6 @@ ONION_SRC	+= $(wildcard ./lib/onion/src/bindings/*.cpp)
 ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/exportlocal.c)
 ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/static.c)
 
-#./lib/onion/src/onion/dir/codecs.c.o
-#./lib/onion/src/onion/dir/dict.c.o
-#./lib/onion/src/onion/dir/low.c.o
-#./lib/onion/src/onion/dir/request.c.o
-#./lib/onion/src/onion/dir/response.c.o
-#./lib/onion/src/onion/dir/handler.c.o
-#./lib/onion/src/onion/dir/log.c.o
-#./lib/onion/src/onion/dir/sessions.c.o
-#./lib/onion/src/onion/dir/sessions_mem.c.o
-#./lib/onion/src/onion/dir/shortcuts.c.o
-#./lib/onion/src/onion/dir/block.c.o
-#./lib/onion/src/onion/dir/mime.c.o
-#./lib/onion/src/onion/dir/url.c.o
-#./lib/onion/src/onion/dir/listen_point.c.o
-#./lib/onion/src/onion/dir/request_parser.c.o
-#./lib/onion/src/onion/dir/http.c.o
-#./lib/onion/src/onion/dir/websocket.c.o
-#./lib/onion/src/onion/dir/ptr_list.c.o
-#./lib/onion/src/onion/dir/handlers/static.c.o
-#./lib/onion/src/onion/dir/handlers/exportlocal.c.o
-#./lib/onion/src/onion/dir/handlers/opack.c.o
-#./lib/onion/src/onion/dir/handlers/path.c.o
-#./lib/onion/src/onion/dir/handlers/internal_status.c.o
-#./lib/onion/src/onion/dir/version.c.o
-#./lib/onion/src/onion/dir/poller.c.o
-
-
 VPATH	= ./:./support/minimig:./support/sharpmz:./support/archie:./support/st:./support/x86:./support/snes
 
 OBJ	= $(SRC:.c=.c.o) $(SRC2:.cpp=.cpp.o) $(MINIMIG_SRC:.cpp=.cpp.o) $(SHARPMZ_SRC:.cpp=.cpp.o) $(ARCHIE_SRC:.cpp=.cpp.o) $(ST_SRC:.cpp=.cpp.o) $(X86_SRC:.cpp=.cpp.o) $(SNES_SRC:.cpp=.cpp.o) $(LIBCO_SRC:.c=.c.o) $(ONION_SRC:.c=.c.o) $(MINIZ_SRC:.c=.c.o) $(LODEPNG_SRC:.cpp=.cpp.o)

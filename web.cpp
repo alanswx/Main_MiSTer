@@ -211,18 +211,28 @@ int web_setup()
   o = onion_new(O_POOL);
   onion_set_timeout(o, 5000);
   onion_set_hostname(o, "0.0.0.0");
+  onion_set_port(o, "80");
   onion_url *urls = onion_root_url(o);
 
-  onion_url_add_static(urls, "static", "Hello static world", HTTP_OK);
+  //onion_url_add_static(urls, "static", "Hello static world", HTTP_OK);
+#if 0 
   onion_url_add(urls, "^api/screenshot", (void *)screenshot);
   onion_url_add(urls, "^api/loadcore", (void *)loadcore);
   onion_url_add(urls, "^api/getconfig", (void *)getconfig);
   onion_url_add(urls, "^api/loadfile", (void *)loadfile);
   onion_url_add(urls, "^api/filesearch", (void *)filesearch);
   onion_url_add(urls, "^api/(.*)$", (void *)hello);
+#endif
+
   onion_url_add_handler(urls, "^static/", onion_handler_export_local_new("html"));
-  //onion_url_add_with_data(urls, "static/", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
-  onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
+
+#if 0
+  onion_url_add_with_data(urls, "^$", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
+  onion_url_add_with_data(urls, "^index.html", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
+#endif
+
+
+
   //onion_url_add_handler(urls, "^(.*)$", onion_handler_export_local_new("html"));
   //onion_url_add_with_data(urls, "", onion_shortcut_internal_redirect,
    //                       "html/index.html", NULL);
@@ -231,9 +241,10 @@ int web_setup()
   //onion_url_add_handler(urls, "^(.*)$", onion_handler_export_local_new("html"));
 
 
-
+#if 0
   onion_url_add(urls, "", (void *)hello);
   onion_url_add(urls, "^(.*)$", (void *)hello);
+#endif
 
   onion_listen_setup(o);
 
@@ -242,7 +253,6 @@ int web_setup()
 void web_poll()
 {
    onion_listen_poll(o);
-
 }
 void web_cleanup()
 {
