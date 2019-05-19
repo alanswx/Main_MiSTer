@@ -38,6 +38,7 @@ ONION_SRC	= $(wildcard ./lib/onion/src/onion/*.c)
 ONION_SRC	+= $(wildcard ./lib/onion/src/bindings/*.cpp)
 ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/exportlocal.c)
 ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/static.c)
+ONION_SRC	+= $(wildcard ./lib/onion/src/mister/richfilemanager.c)
 
 VPATH	= ./:./support/minimig:./support/sharpmz:./support/archie:./support/st:./support/x86:./support/snes
 

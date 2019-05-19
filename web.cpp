@@ -19,6 +19,7 @@
 #include <onion/dict.h>
 #include <onion/shortcuts.h>
 #include <onion/block.h>
+#include <mister/richfilemanager.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -215,7 +216,7 @@ int web_setup()
   onion_url *urls = onion_root_url(o);
 
   //onion_url_add_static(urls, "static", "Hello static world", HTTP_OK);
-#if 0 
+#if 1 
   onion_url_add(urls, "^api/screenshot", (void *)screenshot);
   onion_url_add(urls, "^api/loadcore", (void *)loadcore);
   onion_url_add(urls, "^api/getconfig", (void *)getconfig);
@@ -225,6 +226,8 @@ int web_setup()
 #endif
 
   onion_url_add_handler(urls, "^static/", onion_handler_export_local_new("html"));
+  // use the call to get the right path
+  onion_url_add_with_data(urls, "^files/connectors/python/filemanager", (void *) RichFileManager, (void*)"/media/fat/", NULL);
 
 #if 0
   onion_url_add_with_data(urls, "^$", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
