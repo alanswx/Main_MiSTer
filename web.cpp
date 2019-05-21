@@ -33,6 +33,7 @@ int screenshot(void *p, onion_request * req, onion_response * res);
 }
 #endif
 
+char nextcore[1024];
 
 /**
  * @short Serves a directory listing.
@@ -173,14 +174,15 @@ int screenshot(void *, onion_request * , onion_response * res) {
       return OCS_INTERNAL_ERROR;
 }
 
+
 int loadcore(void *, onion_request * req, onion_response * res) {
   fprintf(stderr,"loadcore\n");
   const char *core=onion_request_get_queryd(req,"name","menu.rbf");
   onion_response_write0(res, "done");
   onion_response_printf(res, "<p>name: %s",core);
   fprintf(stderr,"loadcore:%s\n",core);
-  int result=fpga_load_rbf(core);
-  fprintf(stderr,"loadcore:%s returning result: %d\n",core,result);
+  onion_response_flush(res);
+  strcpy(nextcore,core);
   return OCS_PROCESSED;
 
 }
@@ -248,6 +250,7 @@ int web_setup()
 //  ONION_VERSION_IS_COMPATIBLE_OR_ABORT();
   char base_path[1024];
   char html_path[1024];
+  nextcore[0]=0;
   // the rootDir needs to end in a / or it messes up our parsing later
   strcpy(base_path,getRootDir());
   if (base_path[strlen(base_path)-1]!='/')
@@ -287,6 +290,12 @@ int count=1000;
 void web_poll()
 {
    // this code is to delay, and do the keyup event if we have a keypress event
+   if (strlen(nextcore))
+   {
+  	int result=fpga_load_rbf(nextcore);
+	printf("load new core [%s] %d\n",nextcore,result);
+	return ;
+   }
              if (code) {
 	   count--;
 	   if (count<=0) {
