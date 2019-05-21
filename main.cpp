@@ -71,7 +71,7 @@ int main(int argc, char *argv[])
 
 
 	scheduler_init();
-	web_setup();
+	//web_setup();
 	scheduler_run();
 	web_cleanup();
 

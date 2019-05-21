@@ -6,6 +6,7 @@
 #include "lib/lodepng/lodepng.h"
 #include "fpga_io.h"
 #include "user_io.h"
+#include "menu.h"
 #include "cheats.h"
 
 #include <netdb.h>
@@ -247,11 +248,13 @@ int web_setup()
 {
 //  ONION_VERSION_IS_COMPATIBLE_OR_ABORT();
   char base_path[1024];
+  char html_path[1024];
   // the rootDir needs to end in a / or it messes up our parsing later
   strcpy(base_path,getRootDir());
   if (base_path[strlen(base_path)-1]!='/')
 	  strcat(base_path,"/");
 
+  sprintf(html_path,"%shtml",base_path);
   o = onion_new(O_POOL);
   onion_set_timeout(o, 5000);
   onion_set_hostname(o, "0.0.0.0");
@@ -270,7 +273,7 @@ int web_setup()
 
   // This places all the static HTML from html directory at / 
   onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
-  onion_handler *dir = onion_handler_export_local_new("html");
+  onion_handler *dir = onion_handler_export_local_new(html_path);
   onion_handler_add(dir, onion_handler_static("<h1>404 - File not found.</h1>", 404));
   onion_handler_add((onion_handler *)urls,dir);
  
@@ -282,20 +285,43 @@ int web_setup()
 
 int count=1000;
 
+#define kNetwork_none 0
+#define kNetwork_needsinit 1
+#define kNetwork_running 2
+
+int web_state = kNetwork_none;
 void web_poll()
 {
-   // this code is to delay, and do the keyup event if we have a keypress event
-   if (code) {
+   switch(web_state)
+   {
+	   case kNetwork_none:
+		   // check network
+		char *net;
+                net = getNet(1);
+		if (net && strlen(net))  { web_state=kNetwork_needsinit; printf("getNet(1): %s\n",net);}
+                net = getNet(2);
+		if (net && strlen(net))  { web_state=kNetwork_needsinit; printf("getNet(2): %s\n",net);}
+
+	   break;
+	   case kNetwork_needsinit:
+              web_setup();
+              web_state=kNetwork_running;
+	   break;
+	   case kNetwork_running:
+             if (code) {
 	   count--;
 	   if (count<=0) {
 		   count=1000;
 	 	   user_io_kbd(code, 0);
 		   code=0;
 	   }
-   }
+          }
 
-   // poll onion
-   onion_listen_poll(o);
+          // poll onion
+          onion_listen_poll(o);
+      break;
+   }
+   // this code is to delay, and do the keyup event if we have a keypress event
 }
 void web_cleanup()
 {

@@ -550,7 +550,7 @@ static int toggle_wminput()
 	return ret;
 }
 
-static char* getNet(int spec)
+char* getNet(int spec)
 {
 	int netType = 0;
 	struct ifaddrs *ifaddr, *ifa, *ifae = 0, *ifaw = 0;
