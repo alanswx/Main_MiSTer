@@ -19,7 +19,9 @@
 #include <onion/dict.h>
 #include <onion/shortcuts.h>
 #include <onion/block.h>
+
 #include <mister/richfilemanager.h>
+#include <mister/uinput-key.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,7 +101,6 @@ int filesearch(void *p, onion_request * req, onion_response * res) {
 
 int getScreenshotBuf(unsigned char **buf,unsigned int *outsize)
 {
-		        printf("print key pressed - do screen shot\n");
                         mister_scaler *ms=mister_scaler_init();
                         if (ms==NULL)
                         {
@@ -124,23 +125,52 @@ int getScreenshotBuf(unsigned char **buf,unsigned int *outsize)
 			return 0;
 }
 
+int code = 0;
+
+int keypress(void *p, onion_request * req, onion_response * res) {
+  onion_response_set_header(res, "Content-Type", "application/json");
+  const char *keystr=onion_request_get_queryd(req,"key","");
+  if (strlen(keystr)) {
+	  uint16_t key = atoi(keystr);
+	  printf("key: [%d]\n",key);
+	  int newcode=keycode_to_key(key);
+	  if (newcode==code){
+          	user_io_kbd(code, 2);
+	  } else if (code!=0) {
+          	user_io_kbd(code, 0);
+	  } else {
+		code=newcode;
+          	user_io_kbd(code, 1);
+	  }
+
+  	onion_response_write0(res, "{ \"result\" : \"success\" } ");
+  }else
+  {
+  	onion_response_write0(res, "{ \"result\" : \"error\" } ");
+  }
+
+}
 int screenshot(void *p, onion_request * req, onion_response * res) {
   unsigned char *buf;
   unsigned int outsize;
   onion_response_set_header(res, "Content-Type", "image/png");
-  if (onion_response_write_headers(res) == OR_SKIP_CONTENT)     // Maybe it was HEAD.
-    return OCS_PROCESSED;
+  //if (onion_response_write_headers(res) == OR_SKIP_CONTENT)     // Maybe it was HEAD.
+  //  return OCS_PROCESSED;
 
   int result = getScreenshotBuf(&buf,&outsize);
   fprintf(stdout,"screenshot: result: %d \n",result);
   if (result==0 && buf && outsize)
   {
-  ssize_t size= onion_response_write(res, (const char*)buf,outsize);
-  free(buf);
-  fprintf(stdout,"screenshot: result: %d size: %d\n",result,size);
+  	ssize_t size= onion_response_write(res, (const char*)buf,outsize);
+  	free(buf);
+  	fprintf(stdout,"screenshot: result: %d size: %d\n",result,size);
+    return OCS_PROCESSED;
   }
-  return OCS_PROCESSED;
+  else {
+      return OCS_INTERNAL_ERROR;
+  }
 
+      return OCS_INTERNAL_ERROR;
 }
 
 int loadcore(void *p, onion_request * req, onion_response * res) {
@@ -218,6 +248,7 @@ int web_setup()
   //onion_url_add_static(urls, "static", "Hello static world", HTTP_OK);
 #if 1 
   onion_url_add(urls, "^api/screenshot", (void *)screenshot);
+  onion_url_add(urls, "^api/keypress", (void *)keypress);
   onion_url_add(urls, "^api/loadcore", (void *)loadcore);
   onion_url_add(urls, "^api/getconfig", (void *)getconfig);
   onion_url_add(urls, "^api/loadfile", (void *)loadfile);
@@ -229,7 +260,7 @@ int web_setup()
   // use the call to get the right path
   onion_url_add_with_data(urls, "^files/connectors/python/filemanager", (void *) RichFileManager, (void*)"/media/fat/", NULL);
 
-#if 0
+#if 1
   onion_url_add_with_data(urls, "^$", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
   onion_url_add_with_data(urls, "^index.html", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
 #endif
@@ -253,8 +284,19 @@ int web_setup()
 
   return 0;
 }
+
+int count=1000;
+
 void web_poll()
 {
+   if (code) {
+	   count--;
+	   if (count<=0) {
+		   count=1000;
+	 	   user_io_kbd(code, 0);
+		   code=0;
+	   }
+   }
    onion_listen_poll(o);
 }
 void web_cleanup()
