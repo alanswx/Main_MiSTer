@@ -211,11 +211,12 @@ int loadfile(void *p, onion_request * req, onion_response * res) {
                 printf("File selected: %s\n", SelectedPath);
                 //user_io_file_tx(SelectedPath, user_io_ext_idx(SelectedPath, fs_pFileExt) << 6 | (menusub + 1), opensave);
                 user_io_file_tx(SelectedPath, user_io_ext_idx((char *)SelectedPath, (char *)fs_pFileExt) << 6 | (0+ 1) );
-                cheats_init((char *)SelectedPath);
+		if(user_io_use_cheats()) cheats_init(SelectedPath, user_io_get_file_crc());
                 
                 break;
 	}
   onion_response_printf(res, "loadfile [%s] [%s]\n",SelectedPath,fs_pFileExt);
+  return OCS_PROCESSED;
 }
 
 int hello(void *p, onion_request * req, onion_response * res) {
