@@ -49,7 +49,44 @@ struct CheatComp
 
 static char cheat_zip[1024] = {};
 
-void cheats_init(char *rom_path)
+int find_by_crc(uint32_t romcrc)
+{
+	sprintf(cheat_zip, "%s/cheats/%s", getRootDir(), HomeDir);
+	DIR *d = opendir(cheat_zip);
+	if (!d)
+	{
+		printf("Couldn't open dir: %s\n", cheat_zip);
+		return 0;
+	}
+
+	struct dirent *de;
+	while((de = readdir(d)))
+	{
+		if (de->d_type == DT_REG)
+		{
+			int len = strlen(de->d_name);
+			if (len >= 14 && de->d_name[len - 14] == '[' && !strcasecmp(de->d_name+len-5, "].zip"))
+			{
+				uint32_t crc = 0;
+				if (sscanf(de->d_name + len - 14, "[%X].zip", &crc) == 1)
+				{
+					if (crc == romcrc)
+					{
+						strcat(cheat_zip, "/");
+						strcat(cheat_zip, de->d_name);
+						closedir(d);
+						return 1;
+					}
+				}
+			}
+		}
+	}
+
+	closedir(d);
+	return 0;
+}
+
+void cheats_init(const char *rom_path, uint32_t romcrc)
 {
 	cheats.clear();
 	loaded = 0;
@@ -68,20 +105,35 @@ void cheats_init(char *rom_path)
 	{
 		memset(&_z, 0, sizeof(_z));
 
-		char *rom_name = strrchr(rom_path, '/');
-		if (!rom_name) return;
-
-		sprintf(cheat_zip, "%s/cheats/%s%s", getRootDir(), HomeDir, rom_name);
-		char *p = strrchr(cheat_zip, '.');
-		if (p) *p = 0;
-		strcat(cheat_zip, ".zip");
-
-		if (!mz_zip_reader_init_file(&_z, cheat_zip, 0))
+		const char *rom_name = strrchr(rom_path, '/');
+		if (rom_name)
 		{
-			printf("no cheat file %s\n", cheat_zip);
-			return;
+			sprintf(cheat_zip, "%s/cheats/%s%s", getRootDir(), HomeDir, rom_name);
+			char *p = strrchr(cheat_zip, '.');
+			if (p) *p = 0;
+			strcat(cheat_zip, ".zip");
+
+			if (!mz_zip_reader_init_file(&_z, cheat_zip, 0))
+			{
+				memset(&_z, 0, sizeof(_z));
+				if (!find_by_crc(romcrc) || !mz_zip_reader_init_file(&_z, cheat_zip, 0))
+				{
+					printf("no cheat file found\n");
+					return;
+				}
+			}
+		}
+		else
+		{
+			if (!find_by_crc(romcrc) || !mz_zip_reader_init_file(&_z, cheat_zip, 0))
+			{
+				printf("no cheat file found\n");
+				return;
+			}
 		}
 	}
+
+	printf("Using cheat file: %s\n", cheat_zip);
 
 	mz_zip_archive *z = new mz_zip_archive(_z);
 	for (size_t i = 0; i < mz_zip_reader_get_num_files(z); i++)

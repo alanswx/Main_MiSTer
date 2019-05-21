@@ -66,6 +66,9 @@
 #define UIO_SET_FLTNUM  0x2B  // Set Scaler predefined filter
 #define UIO_GET_VMODE   0x2C  // Get video mode parameters
 #define UIO_SET_VPOS    0x2D  // Set video positions
+#define UIO_GET_OSDMASK 0x2E  // Get mask
+#define UIO_SET_FBUF    0x2F  // Set frame buffer for HPS output
+#define UIO_WAIT_VSYNC  0x30  // Wait for VSync
 
 // codes as used by 8bit for file loading from OSD
 #define UIO_FILE_TX     0x53
@@ -116,14 +119,15 @@
 #define KBD_LED_FLAG_MASK     0xC0
 #define KBD_LED_FLAG_STATUS   0x40
 
-#define BUTTON1                 0b00000001
-#define BUTTON2                 0b00000010
-#define CONF_VGA_SCALER         0b00000100
-#define CONF_CSYNC              0b00001000
-#define CONF_FORCED_SCANDOUBLER 0b00010000
-#define CONF_YPBPR              0b00100000
-#define CONF_AUDIO_96K          0b01000000
-#define CONF_DVI                0b10000000
+#define BUTTON1                 0b000000001
+#define BUTTON2                 0b000000010
+#define CONF_VGA_SCALER         0b000000100
+#define CONF_CSYNC              0b000001000
+#define CONF_FORCED_SCANDOUBLER 0b000010000
+#define CONF_YPBPR              0b000100000
+#define CONF_AUDIO_96K          0b001000000
+#define CONF_DVI                0b010000000
+#define CONF_HDMI_LIMITED       0b100000000
 
 // core type value should be unlikely to be returned by broken cores
 #define CORE_TYPE_UNKNOWN   0x55
@@ -188,6 +192,7 @@ void user_io_serial_tx(char *, uint16_t);
 char *user_io_8bit_get_string(char);
 uint32_t user_io_8bit_set_status(uint32_t, uint32_t);
 int user_io_file_tx(const char* name, unsigned char index = 0, char opensave = 0, char mute = 0, char composite = 0);
+uint32_t user_io_get_file_crc();
 int  user_io_file_mount(char *name, unsigned char index = 0, char pre = 0);
 char user_io_serial_status(serial_status_t *, uint8_t);
 char *user_io_get_core_name();
@@ -219,7 +224,6 @@ void user_io_set_joyswap(int swap);
 int user_io_get_joyswap();
 char user_io_osd_is_visible();
 void user_io_send_buttons(char);
-void parse_video_mode();
 
 void user_io_set_index(unsigned char index);
 unsigned char user_io_ext_idx(char *, char*);
@@ -228,18 +232,8 @@ void user_io_check_reset(unsigned short modifiers, char useKeys);
 
 void user_io_rtc_reset();
 
-int hasAPI1_5();
-
 const char* get_rbf_dir();
 const char* get_rbf_name();
-
-int user_io_get_scaler_flt();
-char* user_io_get_scaler_coeff();
-void user_io_set_scaler_flt(int n);
-void user_io_set_scaler_coeff(char *name);
-
-void user_io_minimig_set_adjust(char n);
-char user_io_minimig_get_adjust();
 
 #define HomeDir (is_minimig() ? "Amiga" : is_archie() ? "Archie" : is_menu_core() ? "Scripts" : user_io_get_core_name())
 
@@ -249,5 +243,8 @@ void SetMidiLinkMode(int mode);
 
 void set_volume(int cmd);
 int  get_volume();
+
+void user_io_store_filename(char *filename);
+int user_io_use_cheats();
 
 #endif // USER_IO_H
