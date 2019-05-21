@@ -40,10 +40,10 @@ int screenshot(void *p, onion_request * req, onion_response * res);
  * next handler.
  */
 
-int filesearch(void *p, onion_request * req, onion_response * res) {
+int filesearch(void *, onion_request * req, onion_response * res) {
   	const char *path=onion_request_get_queryd(req,"name","boot.rom");
-  	const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
-  	const char *output=onion_request_get_queryd(req,"output","json");
+  	//const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
+  	//const char *output=onion_request_get_queryd(req,"output","json");
 
   onion_response_set_header(res, "Content-Type", "text/json");
 
@@ -68,7 +68,7 @@ int filesearch(void *p, onion_request * req, onion_response * res) {
 
         onion_dict_add(file, "name", de->d_name, OD_DUP_VALUE);
 
-        char tmp[256];
+        char tmp[512];
         snprintf(tmp, sizeof(tmp), "%s/%s", realp, de->d_name);
         struct stat st;
         stat(tmp, &st);
@@ -127,7 +127,7 @@ int getScreenshotBuf(unsigned char **buf,unsigned int *outsize)
 
 int code = 0;
 
-int keypress(void *p, onion_request * req, onion_response * res) {
+int keypress(void *, onion_request * req, onion_response * res) {
   onion_response_set_header(res, "Content-Type", "application/json");
   const char *keystr=onion_request_get_queryd(req,"key","");
   if (strlen(keystr)) {
@@ -149,8 +149,9 @@ int keypress(void *p, onion_request * req, onion_response * res) {
   	onion_response_write0(res, "{ \"result\" : \"error\" } ");
   }
 
+    return OCS_PROCESSED;
 }
-int screenshot(void *p, onion_request * req, onion_response * res) {
+int screenshot(void *, onion_request * , onion_response * res) {
   unsigned char *buf;
   unsigned int outsize;
   onion_response_set_header(res, "Content-Type", "image/png");
@@ -173,19 +174,19 @@ int screenshot(void *p, onion_request * req, onion_response * res) {
       return OCS_INTERNAL_ERROR;
 }
 
-int loadcore(void *p, onion_request * req, onion_response * res) {
+int loadcore(void *, onion_request * req, onion_response * res) {
 	fprintf(stderr,"loadcore\n");
   const char *core=onion_request_get_queryd(req,"name","menu.rbf");
   onion_response_write0(res, "done");
   onion_response_printf(res, "<p>name: %s",core);
   fprintf(stderr,"loadcore:%s\n",core);
   int result=fpga_load_rbf(core);
-  fprintf(stderr,"loadcore:%s returning\n",core);
+  fprintf(stderr,"loadcore:%s returning result: %d\n",core,result);
   return OCS_PROCESSED;
 
 }
 
-int getconfig(void *pp, onion_request * req, onion_response * res) {
+int getconfig(void *, onion_request * , onion_response * res) {
 	int i=0;
 	const char * p;
   onion_response_set_header(res, "Content-Type", "text/json");
@@ -201,7 +202,7 @@ int getconfig(void *pp, onion_request * req, onion_response * res) {
   return OCS_PROCESSED;
 }
 
-int loadfile(void *p, onion_request * req, onion_response * res) {
+int loadfile(void *, onion_request * req, onion_response * res) {
 	int id = fpga_core_id();
   	const char *SelectedPath=onion_request_get_queryd(req,"name","boot.rom");
   	const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
@@ -219,7 +220,7 @@ int loadfile(void *p, onion_request * req, onion_response * res) {
   return OCS_PROCESSED;
 }
 
-int hello(void *p, onion_request * req, onion_response * res) {
+int hello(void *, onion_request * req, onion_response * res) {
   //onion_response_set_length(res, 11);
 
   onion_response_write0(res, "Hello world");
@@ -259,7 +260,7 @@ int web_setup()
 
   onion_url_add_handler(urls, "^static/", onion_handler_export_local_new("html"));
   // use the call to get the right path
-  onion_url_add_with_data(urls, "^files/connectors/python/filemanager", (void *) RichFileManager, (void*)"/media/fat/", NULL);
+  onion_url_add_with_data(urls, "^files/connectors/python/filemanager", (void *) RichFileManager, (void *)getRootDir() , NULL);
 
 #if 1
   onion_url_add_with_data(urls, "^$", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
