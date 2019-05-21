@@ -16,6 +16,7 @@
 
 #include <onion/onion.h>
 #include <onion/handlers/exportlocal.h>
+#include <onion/handlers/static.h>
 #include <onion/dict.h>
 #include <onion/shortcuts.h>
 #include <onion/block.h>
@@ -101,28 +102,26 @@ int filesearch(void *, onion_request * req, onion_response * res) {
 
 int getScreenshotBuf(unsigned char **buf,unsigned int *outsize)
 {
-                        mister_scaler *ms=mister_scaler_init();
-                        if (ms==NULL)
-                        {
-                                printf("problem with scaler, maybe not a new enough version\n");
-				return -1;
-                        }
-                        else
-                        {
-                        unsigned char *outputbuf = (unsigned char *)calloc(ms->width*ms->height*3,1);
-                        mister_scaler_read(ms,outputbuf);
-                        //user_io_get_core_name()
-			unsigned error = lodepng_encode24(buf,outsize,outputbuf,ms->width,ms->height);
+    mister_scaler *ms=mister_scaler_init();
+    if (ms==NULL)
+    {
+        printf("problem with scaler, maybe not a new enough version\n");
+        return -1;
+    }
+    else {
+        unsigned char *outputbuf = (unsigned char *)calloc(ms->width*ms->height*3,1);
+        mister_scaler_read(ms,outputbuf);
+        unsigned error = lodepng_encode24(buf,outsize,outputbuf,ms->width,ms->height);
 
-                        if(error) {
-                                printf("error %u: %s\n", error, lodepng_error_text(error));
-				return -1*error;
-                        }
-                        free(outputbuf);
-                        mister_scaler_free(ms);
-			}
+        if(error) {
+        printf("error %u: %s\n", error, lodepng_error_text(error));
+        return -1*error;
+        }
+        free(outputbuf);
+        mister_scaler_free(ms);
+    }
 
-			return 0;
+return 0;
 }
 
 int code = 0;
@@ -175,7 +174,7 @@ int screenshot(void *, onion_request * , onion_response * res) {
 }
 
 int loadcore(void *, onion_request * req, onion_response * res) {
-	fprintf(stderr,"loadcore\n");
+  fprintf(stderr,"loadcore\n");
   const char *core=onion_request_get_queryd(req,"name","menu.rbf");
   onion_response_write0(res, "done");
   onion_response_printf(res, "<p>name: %s",core);
@@ -187,43 +186,50 @@ int loadcore(void *, onion_request * req, onion_response * res) {
 }
 
 int getconfig(void *, onion_request * , onion_response * res) {
-	int i=0;
-	const char * p;
-  onion_response_set_header(res, "Content-Type", "text/json");
-  onion_response_printf(res, "[\n");
-	do {
-                p = user_io_8bit_get_string(i);
-                printf("get cfgstring %d = %s\n", i, p);
-  		if (i!=0) onion_response_printf(res, " , ");
-  		onion_response_printf(res, "{\"%d\": \"%s\"}",i,p);
-		i++;
-	} while (p || i<3);
+    int i=0;
+    const char * p;
+    onion_response_set_header(res, "Content-Type", "text/json");
+    onion_response_printf(res, "[\n");
+    do {
+       p = user_io_8bit_get_string(i);
+       printf("get cfgstring %d = %s\n", i, p);
+       if (i!=0) onion_response_printf(res, " , ");
+       onion_response_printf(res, "{\"%d\": \"%s\"}",i,p);
+       i++;
+    } while (p || i<3);
   onion_response_printf(res, "]\n");
   return OCS_PROCESSED;
 }
 
 int loadfile(void *, onion_request * req, onion_response * res) {
-	int id = fpga_core_id();
-  	const char *SelectedPath=onion_request_get_queryd(req,"name","boot.rom");
-  	const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
-	switch(id)
-	{
-		case CORE_TYPE_8BIT:
-                printf("File selected: %s\n", SelectedPath);
-                //user_io_file_tx(SelectedPath, user_io_ext_idx(SelectedPath, fs_pFileExt) << 6 | (menusub + 1), opensave);
-                user_io_file_tx(SelectedPath, user_io_ext_idx((char *)SelectedPath, (char *)fs_pFileExt) << 6 | (0+ 1) );
-		if(user_io_use_cheats()) cheats_init(SelectedPath, user_io_get_file_crc());
-                
-                break;
-	}
-  onion_response_printf(res, "loadfile [%s] [%s]\n",SelectedPath,fs_pFileExt);
-  return OCS_PROCESSED;
+
+    int id = fpga_core_id();
+    const char *SelectedPath=onion_request_get_queryd(req,"name","boot.rom");
+    const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
+
+    switch(id)
+    {
+        case CORE_TYPE_8BIT:
+           printf("File selected: %s\n", SelectedPath);
+           user_io_file_tx(SelectedPath, user_io_ext_idx((char *)SelectedPath, (char *)fs_pFileExt) << 6 | (0+ 1) );
+           if(user_io_use_cheats()) cheats_init(SelectedPath, user_io_get_file_crc());
+        break;
+    }
+
+    onion_response_printf(res, "loadfile [%s] [%s]\n",SelectedPath,fs_pFileExt);
+    return OCS_PROCESSED;
 }
 
-int hello(void *, onion_request * req, onion_response * res) {
+int api_help(void *, onion_request * req, onion_response * res) {
   //onion_response_set_length(res, 11);
 
-  onion_response_write0(res, "Hello world");
+  onion_response_write0(res, "<b>API</b><p/>");
+  onion_response_write0(res, "/api/screenshot  - no parameters, returns a PNG <br/>");
+  onion_response_write0(res, "/api/keypress - key=<javascript keycode>  - sends key to core <br/>");
+  onion_response_write0(res, "/api/loadcore- name=menu.rbf - loads the core and restarts MiSTer binary <br/>");
+  onion_response_write0(res, "/api/loadfile - name=boot.rom ext=rom - sends the file to the core <br/>");
+  onion_response_write0(res, "/api/getconfig - no parameters, returns JSON of core config_str if 8bit<br/>");
+  onion_response_write0(res, "/api/filesearch - name=<path>  - returns json with files in the directory <br/>");
   if (onion_request_get_query(req, "1")) {
     onion_response_printf(res, "<p>Path: %s",
                           onion_request_get_query(req, "1"));
@@ -240,6 +246,11 @@ onion *o = NULL;
 int web_setup()
 {
 //  ONION_VERSION_IS_COMPATIBLE_OR_ABORT();
+  char base_path[1024];
+  // the rootDir needs to end in a / or it messes up our parsing later
+  strcpy(base_path,getRootDir());
+  if (base_path[strlen(base_path)-1]!='/')
+	  strcat(base_path,"/");
 
   o = onion_new(O_POOL);
   onion_set_timeout(o, 5000);
@@ -247,40 +258,22 @@ int web_setup()
   onion_set_port(o, "80");
   onion_url *urls = onion_root_url(o);
 
-  //onion_url_add_static(urls, "static", "Hello static world", HTTP_OK);
-#if 1 
+  // Add API URL handlers
   onion_url_add(urls, "^api/screenshot", (void *)screenshot);
   onion_url_add(urls, "^api/keypress", (void *)keypress);
   onion_url_add(urls, "^api/loadcore", (void *)loadcore);
   onion_url_add(urls, "^api/getconfig", (void *)getconfig);
   onion_url_add(urls, "^api/loadfile", (void *)loadfile);
   onion_url_add(urls, "^api/filesearch", (void *)filesearch);
-  onion_url_add(urls, "^api/(.*)$", (void *)hello);
-#endif
+  onion_url_add_with_data(urls, "^api/richfilemanager", (void *) RichFileManager, (void *)base_path , NULL);
+  onion_url_add(urls, "^api/(.*)$", (void *)api_help);
 
-  onion_url_add_handler(urls, "^static/", onion_handler_export_local_new("html"));
-  // use the call to get the right path
-  onion_url_add_with_data(urls, "^files/connectors/python/filemanager", (void *) RichFileManager, (void *)getRootDir() , NULL);
-
-#if 1
-  onion_url_add_with_data(urls, "^$", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
-  onion_url_add_with_data(urls, "^index.html", (void*)onion_shortcut_internal_redirect, (void *)"static/index.html",NULL);
-#endif
-
-
-
-  //onion_url_add_handler(urls, "^(.*)$", onion_handler_export_local_new("html"));
-  //onion_url_add_with_data(urls, "", onion_shortcut_internal_redirect,
-   //                       "html/index.html", NULL);
-
-  //onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
-  //onion_url_add_handler(urls, "^(.*)$", onion_handler_export_local_new("html"));
-
-
-#if 0
-  onion_url_add(urls, "", (void *)hello);
-  onion_url_add(urls, "^(.*)$", (void *)hello);
-#endif
+  // This places all the static HTML from html directory at / 
+  onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
+  onion_handler *dir = onion_handler_export_local_new("html");
+  onion_handler_add(dir, onion_handler_static("<h1>404 - File not found.</h1>", 404));
+  onion_handler_add((onion_handler *)urls,dir);
+ 
 
   onion_listen_setup(o);
 
@@ -291,6 +284,7 @@ int count=1000;
 
 void web_poll()
 {
+   // this code is to delay, and do the keyup event if we have a keypress event
    if (code) {
 	   count--;
 	   if (count<=0) {
@@ -299,6 +293,8 @@ void web_poll()
 		   code=0;
 	   }
    }
+
+   // poll onion
    onion_listen_poll(o);
 }
 void web_cleanup()
