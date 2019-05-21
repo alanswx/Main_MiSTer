@@ -6,7 +6,6 @@
 #include "lib/lodepng/lodepng.h"
 #include "fpga_io.h"
 #include "user_io.h"
-#include "menu.h"
 #include "cheats.h"
 
 #include <netdb.h>
@@ -285,29 +284,9 @@ int web_setup()
 
 int count=1000;
 
-#define kNetwork_none 0
-#define kNetwork_needsinit 1
-#define kNetwork_running 2
-
-int web_state = kNetwork_none;
 void web_poll()
 {
-   switch(web_state)
-   {
-	   case kNetwork_none:
-		   // check network
-		char *net;
-                net = getNet(1);
-		if (net && strlen(net))  { web_state=kNetwork_needsinit; printf("getNet(1): %s\n",net);}
-                net = getNet(2);
-		if (net && strlen(net))  { web_state=kNetwork_needsinit; printf("getNet(2): %s\n",net);}
-
-	   break;
-	   case kNetwork_needsinit:
-              web_setup();
-              web_state=kNetwork_running;
-	   break;
-	   case kNetwork_running:
+   // this code is to delay, and do the keyup event if we have a keypress event
              if (code) {
 	   count--;
 	   if (count<=0) {
@@ -319,9 +298,6 @@ void web_poll()
 
           // poll onion
           onion_listen_poll(o);
-      break;
-   }
-   // this code is to delay, and do the keyup event if we have a keypress event
 }
 void web_cleanup()
 {
