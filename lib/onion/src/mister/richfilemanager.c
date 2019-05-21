@@ -86,8 +86,11 @@ void print_dir_json(onion_response * res, const char *basepath,const char *path)
     char dirname[256];
     snprintf(dirname, sizeof(dirname), "%s%s", basepath,path);
     char *realp = realpath(dirname, NULL);
-    if (!realp)
+    if (!realp) {
+        ONION_WARNING("print_dir_json realpath returned null dirname:[%s] basepath[%s] path[%s]\n",dirname,basepath,path);
+	
       return;
+    }
 
     DIR *dir = opendir(realp);
     if (dir) {                  // its a dir, fill the dictionary.
