@@ -222,8 +222,11 @@ int loadfile(void *, onion_request * req, onion_response * res) {
     return OCS_PROCESSED;
 }
 
-int api_help(void *, onion_request * req, onion_response * res) {
+int api_help(void *p, onion_request * req, onion_response * res) {
   //onion_response_set_length(res, 11);
+  //
+  if (p)
+      onion_response_printf(res, "<h2>%s</h2><h3>Download and install the html files into the MiSTer root</h3>",p);
 
   onion_response_write0(res, "<b>API</b><p/>");
   onion_response_write0(res, "/api/screenshot  - no parameters, returns a PNG <br/>");
@@ -232,12 +235,14 @@ int api_help(void *, onion_request * req, onion_response * res) {
   onion_response_write0(res, "/api/loadfile - name=boot.rom ext=rom - sends the file to the core <br/>");
   onion_response_write0(res, "/api/getconfig - no parameters, returns JSON of core config_str if 8bit<br/>");
   onion_response_write0(res, "/api/filesearch - name=<path>  - returns json with files in the directory <br/>");
+
   if (onion_request_get_query(req, "1")) {
     onion_response_printf(res, "<p>Path: %s",
                           onion_request_get_query(req, "1"));
   }
   onion_response_printf(res, "<p>Client description: %s",
                         onion_request_get_client_description(req));
+
   return OCS_PROCESSED;
 }
 
@@ -275,9 +280,16 @@ int web_setup()
 
   // This places all the static HTML from html directory at / 
   onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
-  onion_handler *dir = onion_handler_export_local_new(html_path);
-  onion_handler_add(dir, onion_handler_static("<h1>404 - File not found.</h1>", 404));
-  onion_handler_add((onion_handler *)urls,dir);
+  // check to see if html_path exists
+  struct stat sb;
+  if (stat(html_path, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+    onion_handler *dir = onion_handler_export_local_new(html_path);
+    onion_handler_add(dir, onion_handler_static("<h1>404 - File not found.</h1>", 404));
+    onion_handler_add((onion_handler *)urls,dir);
+  } else {
+     onion_url_add_with_data(urls, "index.html", (void *)api_help,(void *)"missing html directory",NULL);
+  }
+
  
 
   onion_listen_setup(o);
