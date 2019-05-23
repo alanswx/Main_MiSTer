@@ -35,6 +35,14 @@ int screenshot(void *p, onion_request * req, onion_response * res);
 
 char nextcore[1024];
 
+int matchesExtension(const char *name, const char*ext) {
+    const char * dotptr = strrchr(name,'.');
+    if (!dotptr) return 0;
+    if (!strcasecmp(dotptr+1,ext)) return 1;
+    return 0;
+}
+
+
 /**
  * @short Serves a directory listing.
  * 
@@ -42,12 +50,14 @@ char nextcore[1024];
  * next handler.
  */
 
+
 int filesearch(void *, onion_request * req, onion_response * res) {
   	const char *path=onion_request_get_queryd(req,"name","boot.rom");
-  	//const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
+  	const char *fs_pFileExt=onion_request_get_queryd(req,"ext","rom");
   	//const char *output=onion_request_get_queryd(req,"output","json");
 
   onion_response_set_header(res, "Content-Type", "text/json");
+  onion_response_set_header(res, "Access-Control-Allow-Origin", "*");
 
     char *realp = realpath(path, NULL);
     if (!realp)
@@ -64,6 +74,12 @@ int filesearch(void *, onion_request * req, onion_response * res) {
 
       struct dirent *de;
       while ((de = readdir(dir))) {     // Fill one files.[filename] per file.
+	if (!strcasecmp(de->d_name,".")) continue;
+	if (!strcasecmp(de->d_name,"..")) continue;
+
+	if (!strcasecmp(fs_pFileExt,"RBF") && de->d_type==DT_DIR && de->d_name[0]!='_') continue;
+
+        if (matchesExtension(de->d_name,fs_pFileExt) ||de->d_type==DT_DIR ) {
         onion_dict *file = onion_dict_new();
         onion_dict_add(files, de->d_name, file,
                        OD_DUP_KEY | OD_DICT | OD_FREE_VALUE);
@@ -85,6 +101,7 @@ int filesearch(void *, onion_request * req, onion_response * res) {
           onion_dict_add(file, "type", "dir", 0);
         else
           onion_dict_add(file, "type", "file", 0);
+	}
       }
       closedir(dir);
 
@@ -191,6 +208,7 @@ int getconfig(void *, onion_request * , onion_response * res) {
     int i=0;
     const char * p;
     onion_response_set_header(res, "Content-Type", "text/json");
+    onion_response_set_header(res, "Access-Control-Allow-Origin", "*");
     onion_response_printf(res, "[\n");
     do {
        p = user_io_8bit_get_string(i);
@@ -226,7 +244,7 @@ int api_help(void *p, onion_request * req, onion_response * res) {
   //onion_response_set_length(res, 11);
   //
   if (p)
-      onion_response_printf(res, "<h2>%s</h2><h3>Download and install the html files into the MiSTer root</h3>",p);
+      onion_response_printf(res, "<h2>%s</h2><h3>Download and install the html files into the MiSTer root</h3>",(char *)p);
 
   onion_response_write0(res, "<b>API</b><p/>");
   onion_response_write0(res, "/api/screenshot  - no parameters, returns a PNG <br/>");
@@ -277,6 +295,9 @@ int web_setup()
   onion_url_add(urls, "^api/filesearch", (void *)filesearch);
   onion_url_add_with_data(urls, "^api/richfilemanager", (void *) RichFileManager, (void *)base_path , NULL);
   onion_url_add(urls, "^api/(.*)$", (void *)api_help);
+
+  //onion_url_add(urls, "^react/(.*)$", (void*)onion_handler_export_local_new("/media/fat/html/react/index.html"));
+  onion_url_add_with_data(urls, "react/", (void*)onion_shortcut_internal_redirect, (void *)"react/index.html",NULL);
 
   // This places all the static HTML from html directory at / 
   onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);

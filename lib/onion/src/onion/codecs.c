@@ -32,6 +32,8 @@
 #endif
 #endif
 
+#include "sha-1.h"
+
 #include "low.h"
 #include "log.h"
 #include "codecs.h"
@@ -378,8 +380,8 @@ char *onion_c_quote(const char *str, char *ret, int l) {
  */
 void onion_sha1(const char *data, int length, char *result) {
 #ifndef HAVE_GNUTLS
-  ONION_ERROR("Cant calculate SHA1 if gnutls is not compiled in! Aborting now");
-  exit(1);
+  //exit(1);
+  lws_SHA1((unsigned char *)data,length,(unsigned char *)result);
 #else
 #if GNUTLS_VERSION_NUMBER >= 0x020A00
   gnutls_hash_fast(GNUTLS_DIG_SHA1, data, length, result);
