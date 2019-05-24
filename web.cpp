@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 
 #include <onion/onion.h>
+#include <onion/websocket.h>
 #include <onion/handlers/exportlocal.h>
 #include <onion/handlers/static.h>
 #include <onion/dict.h>
@@ -168,6 +169,59 @@ int keypress(void *, onion_request * req, onion_response * res) {
 
     return OCS_PROCESSED;
 }
+
+onion_connection_status websocket_screenshot(void *, onion_websocket * ws, ssize_t data_ready_len) {
+	    mister_scaler *ms=NULL;
+        unsigned char *outputbuf =NULL;
+	  char tmp[256];
+  if (data_ready_len<0) return OCS_PROCESSED;
+  if (data_ready_len > sizeof(tmp))
+    data_ready_len = sizeof(tmp) - 1;
+  int len = onion_websocket_read(ws, tmp, data_ready_len);
+  if (len <= 0) {
+    printf("Error reading data: %d: %s (%d)", errno, strerror(errno),
+                data_ready_len);
+    return OCS_NEED_MORE_DATA;
+  }
+  tmp[len] = 0;
+  //printf( "got: %s", tmp);
+    //ws->opcode=OWS_BINARY;
+    onion_websocket_set_opcode( ws, OWS_BINARY);
+        ms=mister_scaler_init();
+    if (ms==NULL || ms->width>2048 || ms->height>2048)
+    {
+        char len[8];
+        for (int i=0;i<8;i++) len[i]=0;
+        printf("problem with scaler, maybe not a new enough version\n");
+        onion_websocket_write(ws,len,8);
+    }
+    else {
+        // check for change of size
+        outputbuf = (unsigned char *)calloc(ms->width*ms->height*3+8,1);
+        mister_scaler_read(ms,outputbuf+8);
+        int *ptr = (int *)outputbuf;
+        *ptr=ms->width;
+        ptr++;
+        *ptr=ms->height;
+        onion_websocket_write(ws,(const char *)outputbuf,ms->width*ms->height*3+8);
+        free(outputbuf);
+        mister_scaler_free(ms);
+    }
+  return OCS_NEED_MORE_DATA;
+
+}
+onion_connection_status websocket_handler(void *, onion_request * req, onion_response * res) {
+  onion_websocket *ws = onion_websocket_new(req, res);
+  if (ws) {
+    onion_websocket_set_callback(ws, websocket_screenshot);
+    return OCS_WEBSOCKET;
+  }
+
+  return OCS_NOT_PROCESSED;
+}
+
+
+
 int screenshot(void *, onion_request * , onion_response * res) {
   unsigned char *buf;
   unsigned int outsize;
@@ -300,6 +354,7 @@ int web_setup()
   onion_url_add_with_data(urls, "react/", (void*)onion_shortcut_internal_redirect, (void *)"react/index.html",NULL);
 
   // This places all the static HTML from html directory at / 
+  onion_url_add(urls, "", (void *)websocket_handler);
   onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
   // check to see if html_path exists
   struct stat sb;

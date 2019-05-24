@@ -204,7 +204,7 @@ int onion_websocket_write(onion_websocket * ws, const char *buffer, size_t _len)
       int i;
       int tlen = len;
       for (i = 0; i < 8; i++) {
-        header[3 + 8 - i] = tlen & 0x0FF;
+        header[1 + 8 - i] = tlen & 0x0FF;
         tlen >>= 8;
       }
       hlen += 8;
