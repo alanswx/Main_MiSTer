@@ -145,9 +145,7 @@ return 0;
 
 int code = 0;
 
-int keypress(void *, onion_request * req, onion_response * res) {
-  onion_response_set_header(res, "Content-Type", "application/json");
-  const char *keystr=onion_request_get_queryd(req,"key","");
+void send_key(const char *keystr) {
   if (strlen(keystr)) {
 	  uint16_t key = atoi(keystr);
 	  printf("key: [%d]\n",key);
@@ -160,7 +158,14 @@ int keypress(void *, onion_request * req, onion_response * res) {
 		code=newcode;
           	user_io_kbd(code, 1);
 	  }
+  }
+}
 
+int keypress(void *, onion_request * req, onion_response * res) {
+  onion_response_set_header(res, "Content-Type", "application/json");
+  const char *keystr=onion_request_get_queryd(req,"key","");
+  if (strlen(keystr)) {
+      send_key(keystr);
   	onion_response_write0(res, "{ \"result\" : \"success\" } ");
   }else
   {
@@ -184,7 +189,14 @@ onion_connection_status websocket_screenshot(void *, onion_websocket * ws, ssize
     return OCS_NEED_MORE_DATA;
   }
   tmp[len] = 0;
-  //printf( "got: %s", tmp);
+  //send_key(keystr);
+  printf( "got: %s\n", tmp);
+  if (!strncasecmp(tmp,"key:",strlen("key:"))) {
+	  char key[1024];
+	  sscanf(tmp,"key:%s",key);
+	  send_key(key);
+
+  }
     //ws->opcode=OWS_BINARY;
     onion_websocket_set_opcode( ws, OWS_BINARY);
         ms=mister_scaler_init();
@@ -217,7 +229,8 @@ onion_connection_status websocket_handler(void *, onion_request * req, onion_res
     return OCS_WEBSOCKET;
   }
 
-  return OCS_NOT_PROCESSED;
+  /// Shortcut for fast internal redirect. It returns what the server would return with the new address.
+   return onion_shortcut_internal_redirect("index.html",req,res);
 }
 
 
@@ -354,7 +367,8 @@ int web_setup()
   onion_url_add_with_data(urls, "react/", (void*)onion_shortcut_internal_redirect, (void *)"react/index.html",NULL);
 
   // This places all the static HTML from html directory at / 
-  onion_url_add(urls, "", (void *)websocket_handler);
+  //  The websocket code is broken in the library
+  //onion_url_add(urls, "", (void *)websocket_handler);
   onion_url_add_with_data(urls, "", (void*)onion_shortcut_internal_redirect, (void *)"index.html",NULL);
   // check to see if html_path exists
   struct stat sb;
