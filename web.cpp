@@ -39,7 +39,16 @@ char nextcore[1024];
 int matchesExtension(const char *name, const char*ext) {
     const char * dotptr = strrchr(name,'.');
     if (!dotptr) return 0;
-    if (!strcasecmp(dotptr+1,ext)) return 1;
+    // it is possible to have multiple extensions.. we need to walk them 3 at a time
+    int extlen = strlen(ext);
+    for (int i = 0 ; i < extlen ; i+=3) {
+	char newext[4];
+	newext[0]=ext[i];
+	newext[1]=ext[i+1];
+	newext[2]=ext[i+2];
+	newext[3]=0;
+        if (!strcasecmp(dotptr+1,newext)) return 1;
+    }
     return 0;
 }
 
