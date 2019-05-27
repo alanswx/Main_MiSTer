@@ -599,73 +599,75 @@ void user_io_init(const char *path)
 				user_io_8bit_set_status((cfg.menu_pal) ? 0x10 : 0, 0x10);
 				video_menu_bg((status >> 1) & 7);
 			}
-
-			if (is_x86_core())
-			{
-				x86_config_load();
-				x86_init();
-			}
 			else
 			{
-				if (!strlen(path) || !user_io_file_tx(path, 0, 0, 0, 1))
+				if (is_x86_core())
 				{
-					if (!is_cpc_core())
+					x86_config_load();
+					x86_init();
+				}
+				else
+				{
+					if (!strlen(path) || !user_io_file_tx(path, 0, 0, 0, 1))
 					{
-						// check for multipart rom
-						for (char i = 0; i < 4; i++)
+						if (!is_cpc_core())
 						{
-							sprintf(mainpath, "%s/boot%i.rom", user_io_get_core_name(), i);
-							user_io_file_tx(mainpath, i<<6);
+							// check for multipart rom
+							for (char i = 0; i < 4; i++)
+							{
+								sprintf(mainpath, "%s/boot%i.rom", user_io_get_core_name(), i);
+								user_io_file_tx(mainpath, i << 6);
+							}
 						}
+
+						// legacy style of rom
+						sprintf(mainpath, "%s/boot.rom", user_io_get_core_name());
+						if (!user_io_file_tx(mainpath))
+						{
+							strcpy(name + strlen(name) - 3, "ROM");
+							sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
+							if (!get_rbf_dir()[0] || !user_io_file_tx(mainpath))
+							{
+								if (!user_io_file_tx(name))
+								{
+									sprintf(mainpath, "bootrom/%s", name);
+									user_io_file_tx(mainpath);
+								}
+							}
+						}
+
+						// cheats for boot file
+						if (user_io_use_cheats()) cheats_init("", user_io_get_file_crc());
 					}
 
-					// legacy style of rom
-					sprintf(mainpath, "%s/boot.rom", user_io_get_core_name());
-					if (!user_io_file_tx(mainpath))
+					if (is_cpc_core())
 					{
-						strcpy(name + strlen(name) - 3, "ROM");
-						sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
-						if (!get_rbf_dir()[0] || !user_io_file_tx(mainpath))
+						for (int m = 0; m < 3; m++)
 						{
-							if (!user_io_file_tx(name))
+							const char *model = !m ? "" : (m == 1) ? "0" : "1";
+							sprintf(mainpath, "%s/boot%s.eZZ", user_io_get_core_name(), model);
+							user_io_file_tx(mainpath, 0x40 * (m + 1), 0, 1);
+							sprintf(mainpath, "%s/boot%s.eZ0", user_io_get_core_name(), model);
+							user_io_file_tx(mainpath, 0x40 * (m + 1), 0, 1);
+							for (int i = 0; i < 256; i++)
 							{
-								sprintf(mainpath, "bootrom/%s", name);
-								user_io_file_tx(mainpath);
+								sprintf(mainpath, "%s/boot%s.e%02X", user_io_get_core_name(), model, i);
+								user_io_file_tx(mainpath, 0x40 * (m + 1), 0, 1);
 							}
 						}
 					}
 
-					// cheats for boot file
-					if (user_io_use_cheats()) cheats_init("", user_io_get_file_crc());
-				}
-
-				if (is_cpc_core())
-				{
-					for (int m = 0; m < 3; m++)
+					// check if vhd present
+					sprintf(mainpath, "%s/boot.vhd", user_io_get_core_name());
+					user_io_set_index(0);
+					if (!user_io_file_mount(mainpath))
 					{
-						const char *model = !m ? "" : (m == 1) ? "0" : "1";
-						sprintf(mainpath, "%s/boot%s.eZZ", user_io_get_core_name(), model);
-						user_io_file_tx(mainpath, 0x40 * (m + 1),0,1);
-						sprintf(mainpath, "%s/boot%s.eZ0", user_io_get_core_name(), model);
-						user_io_file_tx(mainpath, 0x40 * (m + 1),0,1);
-						for (int i = 0; i < 256; i++)
+						strcpy(name + strlen(name) - 3, "VHD");
+						sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
+						if (!get_rbf_dir()[0] || !user_io_file_mount(mainpath))
 						{
-							sprintf(mainpath, "%s/boot%s.e%02X", user_io_get_core_name(), model, i);
-							user_io_file_tx(mainpath, 0x40 * (m + 1),0,1);
+							user_io_file_mount(name);
 						}
-					}
-				}
-
-				// check if vhd present
-				sprintf(mainpath, "%s/boot.vhd", user_io_get_core_name());
-				user_io_set_index(0);
-				if (!user_io_file_mount(mainpath))
-				{
-					strcpy(name + strlen(name) - 3, "VHD");
-					sprintf(mainpath, "%s/%s", get_rbf_dir(), name);
-					if (!get_rbf_dir()[0] || !user_io_file_mount(mainpath))
-					{
-						user_io_file_mount(name);
 					}
 				}
 			}
@@ -1972,7 +1974,7 @@ void user_io_poll()
 				else if (ps2_wheel < -63) ps2_wheel = -63;
 
 				// collect movement info and send at predefined rate
-				if (is_menu_core()) printf("PS2 MOUSE: %x %d %d %d\n", ps2_mouse[0], ps2_mouse[1], ps2_mouse[2], ps2_wheel);
+				if (is_menu_core() && !video_fb_state()) printf("PS2 MOUSE: %x %d %d %d\n", ps2_mouse[0], ps2_mouse[1], ps2_mouse[2], ps2_wheel);
 
 				if (!osd_is_visible)
 				{
@@ -2593,7 +2595,7 @@ void user_io_kbd(uint16_t key, int press)
 			uint32_t code = get_ps2_code(key);
 			if (!press)
 			{
-				if (is_menu_core()) printf("PS2 code(break)%s for core: %d(0x%X)\n", (code & EXT) ? "(ext)" : "", code & 255, code & 255);
+				if (is_menu_core() && !video_fb_state()) printf("PS2 code(break)%s for core: %d(0x%X)\n", (code & EXT) ? "(ext)" : "", code & 255, code & 255);
 
 				if (key == KEY_MENU) key = KEY_F12;
 				if (osd_is_visible) menu_key_set(UPSTROKE | key);
@@ -2603,7 +2605,7 @@ void user_io_kbd(uint16_t key, int press)
 			}
 			else
 			{
-				if (is_menu_core()) printf("PS2 code(make)%s for core: %d(0x%X)\n", (code & EXT) ? "(ext)" : "", code & 255, code & 255);
+				if (is_menu_core() && !video_fb_state()) printf("PS2 code(make)%s for core: %d(0x%X)\n", (code & EXT) ? "(ext)" : "", code & 255, code & 255);
 				if (!osd_is_visible && !is_menu_core() && key == KEY_MENU && press == 3) open_joystick_setup();
 				else if ((has_menu() || osd_is_visible || (get_key_mod() & (LALT | RALT | RGUI | LGUI))) && (((key == KEY_F12) && ((!is_x86_core() && !is_archie()) || (get_key_mod() & (RGUI | LGUI)))) || key == KEY_MENU)) menu_key_set(KEY_F12);
 				else if (osd_is_visible)

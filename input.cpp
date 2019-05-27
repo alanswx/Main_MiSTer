@@ -9,6 +9,12 @@
 #include <sys/sysinfo.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <linux/input.h>
+#include <linux/uinput.h>
+#include <sys/time.h>
+#include <sys/types.h>
 
 #include "input.h"
 #include "user_io.h"
@@ -21,6 +27,7 @@
 
 #define NUMDEV 30
 #define NUMPLAYERS 6
+#define UINPUT_NAME "MiSTer virtual input"
 
 static int ev2amiga[] =
 {
@@ -1134,13 +1141,7 @@ static char has_led(int fd)
 		return 0;
 	}
 
-	if (test_bit(EV_LED, evtype_b))
-	{
-		printf("has LEDs.\n");
-		return 1;
-	}
-
-	return 0;
+	return test_bit(EV_LED, evtype_b) ? 1 : 0;
 }
 
 static char leds_state = 0;
@@ -1375,6 +1376,69 @@ static uint32_t mouse_timer = 0;
 #define BTN_TGL 100
 #define BTN_OSD 101
 
+static int uinp_fd = -1;
+static int input_uinp_setup()
+{
+	if (uinp_fd <= 0)
+	{
+		struct uinput_user_dev uinp;
+
+		if (!(uinp_fd = open("/dev/uinput", O_WRONLY | O_NDELAY)))
+		{
+			printf("Unable to open /dev/uinput\n");
+			uinp_fd = -1;
+			return 0;
+		}
+
+		memset(&uinp, 0, sizeof(uinp));
+		strncpy(uinp.name, UINPUT_NAME, UINPUT_MAX_NAME_SIZE);
+		uinp.id.version = 4;
+		uinp.id.bustype = BUS_USB;
+
+		ioctl(uinp_fd, UI_SET_EVBIT, EV_KEY);
+		for (int i = 0; i < 256; i++) ioctl(uinp_fd, UI_SET_KEYBIT, i);
+
+		write(uinp_fd, &uinp, sizeof(uinp));
+		if (ioctl(uinp_fd, UI_DEV_CREATE))
+		{
+			printf("Unable to create UINPUT device.");
+			close(uinp_fd);
+			uinp_fd = -1;
+			return 0;
+		}
+	}
+	return 1;
+}
+
+void input_uinp_destroy()
+{
+	if (uinp_fd > 0)
+	{
+		ioctl(uinp_fd, UI_DEV_DESTROY);
+		close(uinp_fd);
+		uinp_fd = -1;
+	}
+}
+
+static void uinp_send_key(uint16_t key, int press)
+{
+	if (uinp_fd > 0)
+	{
+		static struct input_event event;
+
+		memset(&event, 0, sizeof(event));
+		gettimeofday(&event.time, NULL);
+		event.type = EV_KEY;
+		event.code = key;
+		event.value = press ? 1 : 0;
+		write(uinp_fd, &event, sizeof(event));
+		event.type = EV_SYN;
+		event.code = SYN_REPORT;
+		event.value = 0;
+		write(uinp_fd, &event, sizeof(event));
+	}
+}
+
 static void mouse_cb(unsigned char b, int16_t x = 0, int16_t y = 0, int16_t w = 0)
 {
 	if (grabbed) user_io_mouse(b, x, y, w);
@@ -1538,6 +1602,43 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 			}
 
 			input_cb(&ev, 0, 0);
+		}
+		else if (video_fb_state())
+		{
+			switch (mask)
+			{
+			case JOY_RIGHT:
+				uinp_send_key(KEY_RIGHT, press);
+				break;
+
+			case JOY_LEFT:
+				uinp_send_key(KEY_LEFT, press);
+				break;
+
+			case JOY_UP:
+				uinp_send_key(KEY_UP, press);
+				break;
+
+			case JOY_DOWN:
+				uinp_send_key(KEY_DOWN, press);
+				break;
+
+			case JOY_BTN1:
+				uinp_send_key(KEY_ENTER, press);
+				break;
+
+			case JOY_BTN2:
+				uinp_send_key(KEY_ESC, press);
+				break;
+
+			case JOY_BTN3:
+				uinp_send_key(KEY_SPACE, press);
+				break;
+
+			case JOY_BTN4:
+				uinp_send_key(KEY_TAB, press);
+				break;
+			}
 		}
 		else if(jnum)
 		{
@@ -2253,6 +2354,7 @@ int input_test(int getchar)
 
 	if (state == 0)
 	{
+		input_uinp_setup();
 		memset(pool, -1, sizeof(pool));
 
 		signal(SIGINT, INThandler);
@@ -2274,7 +2376,6 @@ int input_test(int getchar)
 		DIR *d = opendir("/dev/input");
 		if (d)
 		{
-			struct input_id id;
 			struct dirent *de;
 			while ((de = readdir(d)))
 			{
@@ -2289,17 +2390,30 @@ int input_test(int getchar)
 					{
 						pool[n].fd = fd;
 						pool[n].events = POLLIN;
-						input[n].led = has_led(pool[n].fd);
-
-						memset(&id, 0, sizeof(id));
-						ioctl(pool[n].fd, EVIOCGID, &id);
-						input[n].vid = id.vendor;
-						input[n].pid = id.product;
-
-						ioctl(pool[n].fd, EVIOCGUNIQ(sizeof(input[n].uniq)), input[n].uniq);
-						ioctl(pool[n].fd, EVIOCGNAME(sizeof(input[n].name)), input[n].name);
-						input[n].bind = -1;
 						input[n].mouse = !strncmp(de->d_name, "mouse", 5);
+
+						if (!input[n].mouse)
+						{
+							struct input_id id;
+							memset(&id, 0, sizeof(id));
+							ioctl(pool[n].fd, EVIOCGID, &id);
+							input[n].vid = id.vendor;
+							input[n].pid = id.product;
+
+							ioctl(pool[n].fd, EVIOCGUNIQ(sizeof(input[n].uniq)), input[n].uniq);
+							ioctl(pool[n].fd, EVIOCGNAME(sizeof(input[n].name)), input[n].name);
+							input[n].led = has_led(pool[n].fd);
+						}
+
+						//skip our virtual device
+						if (!strcmp(input[n].name, UINPUT_NAME))
+						{
+							close(pool[n].fd);
+							pool[n].fd = -1;
+							continue;
+						}
+
+						input[n].bind = -1;
 
 						// enable scroll wheel reading
 						if (input[n].mouse)
@@ -2462,7 +2576,7 @@ int input_test(int getchar)
 
 	if (state == 2)
 	{
-		int return_value = poll(pool, NUMDEV + 2, 0);
+		int return_value = poll(pool, NUMDEV + 1, (is_menu_core() && video_fb_state()) ? 500 : 0);
 		if (return_value < 0)
 		{
 			printf("ERR: poll\n");
@@ -2611,7 +2725,7 @@ int input_test(int getchar)
 									if (ev.code == KEY_MENU) ev.code = BTN_MODE;
 								}
 
-								if (is_menu_core())
+								if (is_menu_core() && !video_fb_state())
 								{
 									/*
 									if (mapping && mapping_type <= 1 && !(ev.type==EV_KEY && ev.value>1))
@@ -2798,7 +2912,7 @@ int input_test(int getchar)
 							xval = ((data[0] & 0x10) ? -256 : 0) | data[1];
 							yval = ((data[0] & 0x20) ? -256 : 0) | data[2];
 
-							if (is_menu_core()) printf("%s: btn=0x%02X, dx=%d, dy=%d, scroll=%d\n", input[i].devname, data[0], xval, yval, (int8_t)data[3]);
+							if (is_menu_core() && !video_fb_state()) printf("%s: btn=0x%02X, dx=%d, dy=%d, scroll=%d\n", input[i].devname, data[0], xval, yval, (int8_t)data[3]);
 
 							if (cfg.mouse_throttle) throttle = cfg.mouse_throttle;
 							if (ds_mouse_emu) throttle *= 4;
@@ -2884,36 +2998,39 @@ int input_poll(int getchar)
 
 	if (!mouse_emu_x && !mouse_emu_y) mouse_timer = 0;
 
-	for (int i = 0; i < NUMPLAYERS; i++)
+	if (grabbed)
 	{
-		if (!af_delay[i]) af_delay[i] = 50;
-
-		if (!time[i]) time[i] = GetTimer(af_delay[i]);
-		int send = 0;
-
-		int newdir = ((joy[i] & 0xF) != (joy_prev[i] & 0xF));
-		if (joy[i] != joy_prev[i])
+		for (int i = 0; i < NUMPLAYERS; i++)
 		{
-			if ((joy[i] ^ joy_prev[i]) & autofire[i])
+			if (!af_delay[i]) af_delay[i] = 50;
+
+			if (!time[i]) time[i] = GetTimer(af_delay[i]);
+			int send = 0;
+
+			int newdir = ((joy[i] & 0xF) != (joy_prev[i] & 0xF));
+			if (joy[i] != joy_prev[i])
 			{
-				time[i] = GetTimer(af_delay[i]);
-				af[i] = 0;
+				if ((joy[i] ^ joy_prev[i]) & autofire[i])
+				{
+					time[i] = GetTimer(af_delay[i]);
+					af[i] = 0;
+				}
+
+				send = 1;
+				joy_prev[i] = joy[i];
 			}
 
-			send = 1;
-			joy_prev[i] = joy[i];
-		}
+			if (CheckTimer(time[i]))
+			{
+				time[i] = GetTimer(af_delay[i]);
+				af[i] = !af[i];
+				if (joy[i] & autofire[i]) send = 1;
+			}
 
-		if (CheckTimer(time[i]))
-		{
-			time[i] = GetTimer(af_delay[i]);
-			af[i] = !af[i];
-			if (joy[i] & autofire[i]) send = 1;
-		}
-
-		if (grabbed && send)
-		{
-			user_io_digital_joystick(i, af[i] ? joy[i] & ~autofire[i] : joy[i], newdir);
+			if (send)
+			{
+				user_io_digital_joystick(i, af[i] ? joy[i] & ~autofire[i] : joy[i], newdir);
+			}
 		}
 	}
 
