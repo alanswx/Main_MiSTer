@@ -23,31 +23,32 @@ INCLUDE	+= -I./lib/onion/arm/src
 INCLUDE	+= -I./lib/onion/src/bindings/cpp
 
 PRJ = MiSTer
-SRC = $(wildcard *.c)
-SRC2 = $(wildcard *.cpp)
-IMG = $(wildcard *.png)
-MINIMIG_SRC	= $(wildcard ./support/minimig/*.cpp)
-SHARPMZ_SRC	= $(wildcard ./support/sharpmz/*.cpp)
-ARCHIE_SRC	= $(wildcard ./support/archie/*.cpp)
-ST_SRC	= $(wildcard ./support/st/*.cpp)
-X86_SRC	= $(wildcard ./support/x86/*.cpp)
-SNES_SRC	= $(wildcard ./support/snes/*.cpp)
-LIBCO_SRC	= lib/libco/arm.c
-LODEPNG_SRC	= lib/lodepng/lodepng.cpp
-MINIZ_SRC	= $(wildcard ./lib/miniz/*.c)
-ONION_SRC	= $(wildcard ./lib/onion/src/onion/*.c)
-ONION_SRC	+= $(wildcard ./lib/onion/src/bindings/*.cpp)
-ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/exportlocal.c)
-ONION_SRC	+= $(wildcard ./lib/onion/src/onion/handlers/static.c)
-ONION_SRC	+= $(wildcard ./lib/onion/src/mister/richfilemanager.c)
-ONION_SRC	+= $(wildcard ./lib/onion/src/mister/uinput-key.c)
+C_SRC =   $(wildcard *.c) \
+          $(wildcard ./lib/miniz/*.c) \
+          $(wildcard ./lib/onion/src/onion/*.c) \
+          $(wildcard ./lib/onion/src/onion/handlers/exportlocal.c) \
+          $(wildcard ./lib/onion/src/onion/handlers/static.c) \
+          $(wildcard ./lib/onion/src/mister/richfilemanager.c) \
+          $(wildcard ./lib/onion/src/mister/uinput-key.c) \
+          lib/libco/arm.c
+
+CPP_SRC = $(wildcard *.cpp) \
+          $(wildcard ./lib/onion/src/bindings/*.cpp) \
+          $(wildcard ./support/minimig/*.cpp) \
+          $(wildcard ./support/sharpmz/*.cpp) \
+          $(wildcard ./support/archie/*.cpp) \
+          $(wildcard ./support/st/*.cpp) \
+          $(wildcard ./support/x86/*.cpp) \
+          $(wildcard ./support/snes/*.cpp) \
+          $(wildcard ./support/neogeo/*.cpp) \
+          lib/lodepng/lodepng.cpp
+
+IMG =     $(wildcard *.png)
 
 IMLIB2_LIB  = -Llib/imlib2 -lfreetype -lbz2 -lpng16 -lz -lImlib2
 
-VPATH	= ./:./support/minimig:./support/sharpmz:./support/archie:./support/st:./support/x86:./support/snes
-
-OBJ	= $(SRC:.c=.c.o) $(SRC2:.cpp=.cpp.o) $(IMG:.png=.png.o) $(MINIMIG_SRC:.cpp=.cpp.o) $(SHARPMZ_SRC:.cpp=.cpp.o) $(ARCHIE_SRC:.cpp=.cpp.o) $(ST_SRC:.cpp=.cpp.o) $(X86_SRC:.cpp=.cpp.o) $(SNES_SRC:.cpp=.cpp.o) $(LIBCO_SRC:.c=.c.o) $(ONION_SRC:.c=.c.o) $(MINIZ_SRC:.c=.c.o) $(LODEPNG_SRC:.cpp=.cpp.o)
-DEP	= $(SRC:.c=.cpp.d) $(SRC2:.cpp=.cpp.d) $(MINIMIG_SRC:.cpp=.cpp.d) $(SHARPMZ_SRC:.cpp=.cpp.d) $(ARCHIE_SRC:.cpp=.cpp.d) $(ST_SRC:.cpp=.cpp.d) $(X86_SRC:.cpp=.cpp.d) $(SNES_SRC:.cpp=.cpp.d) $(LIBCO_SRC:.c=.c.d) $(MINIZ_SRC:.c=.c.d) $(ONION_SRC:.c=.c.d) $(LODEPNG_SRC:.cpp=.cpp.d)
+OBJ	= $(C_SRC:.c=.c.o) $(CPP_SRC:.cpp=.cpp.o) $(IMG:.png=.png.o)
+DEP	= $(C_SRC:.c=.c.d) $(CPP_SRC:.cpp=.cpp.d)
 
 DFLAGS	= $(INCLUDE) -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -DVDATE=\"`date +"%y%m%d"`\" -DONION_VERSION=\"0.8.123.f6b9d.dirty\" -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_ISOC99_SOURCE -D_POSIX_C_SOURCE=200112L
 CFLAGS	= $(DFLAGS) -Wall -Wextra -Wno-strict-aliasing -c -O3

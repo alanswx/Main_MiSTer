@@ -48,7 +48,7 @@
 #define UIO_SET_SDCONF  0x19  // send SD card configuration (CSD, CID)
 #define UIO_ASTICK      0x1a
 #define UIO_SIO_IN      0x1b  // serial in
-#define UIO_SET_SDSTAT  0x1c  // set sd card status 
+#define UIO_SET_SDSTAT  0x1c  // set sd card status
 #define UIO_SET_SDINFO  0x1d  // send info about mounted image
 #define UIO_SET_STATUS2 0x1e  // 32bit status
 #define UIO_GET_KBD_LED 0x1f  // keyboard LEDs control
@@ -106,7 +106,7 @@
 #define JOY_L3     0x4000
 #define JOY_R3     0x8000
 
-// keyboard LEDs control 
+// keyboard LEDs control
 #define KBD_LED_CAPS_CONTROL  0x01
 #define KBD_LED_CAPS_STATUS   0x02
 #define KBD_LED_CAPS_MASK     (KBD_LED_CAPS_CONTROL | KBD_LED_CAPS_STATUS)
@@ -119,20 +119,23 @@
 #define KBD_LED_FLAG_MASK     0xC0
 #define KBD_LED_FLAG_STATUS   0x40
 
-#define BUTTON1                 0b000000001
-#define BUTTON2                 0b000000010
-#define CONF_VGA_SCALER         0b000000100
-#define CONF_CSYNC              0b000001000
-#define CONF_FORCED_SCANDOUBLER 0b000010000
-#define CONF_YPBPR              0b000100000
-#define CONF_AUDIO_96K          0b001000000
-#define CONF_DVI                0b010000000
-#define CONF_HDMI_LIMITED       0b100000000
+#define BUTTON1                 0b0000000000000001
+#define BUTTON2                 0b0000000000000010
+#define CONF_VGA_SCALER         0b0000000000000100
+#define CONF_CSYNC              0b0000000000001000
+#define CONF_FORCED_SCANDOUBLER 0b0000000000010000
+#define CONF_YPBPR              0b0000000000100000
+#define CONF_AUDIO_96K          0b0000000001000000
+#define CONF_DVI                0b0000000010000000
+#define CONF_HDMI_LIMITED1      0b0000000100000000
+#define CONF_VGA_SOG            0b0000001000000000
+#define CONF_DIRECT_VIDEO       0b0000010000000000
+#define CONF_HDMI_LIMITED2      0b0000100000000000
 
 // core type value should be unlikely to be returned by broken cores
 #define CORE_TYPE_UNKNOWN   0x55
 #define CORE_TYPE_DUMB      0xa0   // core without any io controller interaction
-#define CORE_TYPE_MIST      0xa3   // mist atari st core   
+#define CORE_TYPE_MIST      0xa3   // mist atari st core
 #define CORE_TYPE_8BIT      0xa4   // atari 800/c64 like core
 #define CORE_TYPE_MINIMIG2  0xa5   // new Minimig with AGA
 #define CORE_TYPE_ARCHIE    0xa6   // Acorn Archimedes
@@ -162,7 +165,7 @@
 #define UIO_PARITY_MARK  3
 #define UIO_PARITY_SPACE 4
 
-#define UIO_PRIORITY_KEYBOARD 0 
+#define UIO_PRIORITY_KEYBOARD 0
 #define UIO_PRIORITY_GAMEPAD  1
 
 #define EMU_NONE  0
@@ -170,7 +173,7 @@
 #define EMU_JOY0  2
 #define EMU_JOY1  3
 
-// serial status data type returned from the core 
+// serial status data type returned from the core
 typedef struct {
 	uint32_t bitrate;        // 300, 600 ... 115200
 	uint8_t datasize;        // 5,6,7,8 ...
@@ -181,9 +184,6 @@ typedef struct {
 
 void user_io_init(const char *path);
 unsigned char user_io_core_type();
-char is_minimig();
-char is_archie();
-char is_sharpmz();
 void user_io_poll();
 char user_io_menu_button();
 char user_io_user_button();
@@ -197,9 +197,6 @@ int  user_io_file_mount(char *name, unsigned char index = 0, char pre = 0);
 char user_io_serial_status(serial_status_t *, uint8_t);
 char *user_io_get_core_name();
 const char *user_io_get_core_name_ex();
-char is_menu_core();
-char is_x86_core();
-char is_snes_core();
 char has_menu();
 
 const char *get_image_name(int i);
@@ -235,8 +232,6 @@ void user_io_rtc_reset();
 const char* get_rbf_dir();
 const char* get_rbf_name();
 
-#define HomeDir (is_minimig() ? "Amiga" : is_archie() ? "Archie" : is_menu_core() ? "Scripts" : user_io_get_core_name())
-
 int GetUARTMode();
 int GetMidiLinkMode();
 void SetMidiLinkMode(int mode);
@@ -246,5 +241,21 @@ int  get_volume();
 
 void user_io_store_filename(char *filename);
 int user_io_use_cheats();
+
+void diskled_on();
+#define DISKLED_ON  diskled_on()
+#define DISKLED_OFF void()
+
+void parse_cue_file(void);
+
+char is_minimig();
+char is_archie();
+char is_sharpmz();
+char is_menu_core();
+char is_x86_core();
+char is_snes_core();
+char is_neogeo_core();
+
+#define HomeDir (is_minimig() ? "Amiga" : is_archie() ? "Archie" : is_menu_core() ? "Scripts" : user_io_get_core_name())
 
 #endif // USER_IO_H
