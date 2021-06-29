@@ -184,6 +184,12 @@ char is_arcade()
 	return is_arcade_type;
 }
 
+static int menu_is_frontend=0;
+char is_menu_frontend() {
+  return (menu_is_frontend==1);
+
+}
+
 static int is_menu_type = 0;
 char is_menu()
 {
@@ -426,6 +432,11 @@ static void parse_config()
 		{
 			while (p && *p)
 			{
+				if (!strncasecmp(p, "FRONTEND", 8))
+				{
+					menu_is_frontend=1;
+				}
+
 				if (!strncasecmp(p, "SS", 2))
 				{
 					char *end = 0;

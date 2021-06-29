@@ -38,12 +38,15 @@ as rotated copies of the first 128 entries.  -- AMR
 #include <string.h>
 #include <stdio.h>
 
+#include <vector>
+
 #include "osd.h"
 #include "spi.h"
 
 #include "charrom.h"
 #include "logo.h"
 #include "user_io.h"
+#include "file_io.h"
 #include "hardware.h"
 
 #include "support.h"
@@ -52,6 +55,11 @@ as rotated copies of the first 128 entries.  -- AMR
 #define OSD_CMD_WRITE    0x20      // OSD write video data command
 #define OSD_CMD_ENABLE   0x41      // OSD enable command
 #define OSD_CMD_DISABLE  0x40      // OSD disable command
+
+
+typedef std::vector<textline> TextVector;
+
+TextVector textFile;
 
 static int osd_size = 8;
 
@@ -675,4 +683,172 @@ void OsdUpdate()
 	}
 
 	osdset = 0;
+}
+
+
+//
+// Code to display a text file in the OSD
+//
+static char lastFileName[1024] = "";
+static int textFirstEntry = 0;
+
+#define CHAR_IS_LINEEND(c)      (((c) == '\n'))
+#define CHAR_IS_ENTITYSTART(c)      (((c) == '&'))
+#define CHAR_IS_ENTITYEND(c)      (((c) == ';'))
+
+
+
+int txt_pt = 0;
+static char txt_getch(fileTYPE *txtFile)
+{
+	static uint8_t buf[512];
+	if (!(txt_pt & 0x1ff)) FileReadSec(txtFile, buf);
+	if (txt_pt >= txtFile->size) return 0;
+	return buf[(txt_pt++) & 0x1ff];
+}
+static uint8_t lookup_entity(const char*entity)
+{
+	uint8_t result;
+	int res=sscanf(entity,"&#x%x;",&result);
+	if (res==1) return result;
+		/*
+	// boxdr
+	if (!strcasecmp(entity,"&boxdr;"))	return 0x86;
+	if (!strcasecmp(entity,"&#x86;"))	return 0x86;
+
+	if (!strcasecmp(entity,"&#x01;"))	return 0x01; //  four lines
+	if (!strcasecmp(entity,"&#x02;"))	return 0x02; //  three lines
+	if (!strcasecmp(entity,"&#x03;"))	return 0x03; //  two lines
+	if (!strcasecmp(entity,"&#x04;"))	return 0x04; // bluetooth
+
+	if (!strcasecmp(entity,"&#x0e;"))	return 0x0e; // left atari
+	if (!strcasecmp(entity,"&#x0f;"))	return 0x0f; // right atari
+
+	if (!strcasecmp(entity,"&#x10;"))	return 0x10; // left filled arrow
+	if (!strcasecmp(entity,"&#x11;"))	return 0x11; // right filled arrow
+
+	if (!strcasecmp(entity,"&#x12;"))	return 0x84;
+	if (!strcasecmp(entity,"&#x85;"))	return 0x85;
+	if (!strcasecmp(entity,"&#x86;"))	return 0x86;
+	if (!strcasecmp(entity,"&#x87;"))	return 0x87;
+	if (!strcasecmp(entity,"&#x88;"))	return 0x88;
+	if (!strcasecmp(entity,"&#x89;"))	return 0x89;
+
+*/
+	return ' ';
+}
+
+static uint8_t txt_getline(fileTYPE *txtFile,uint8_t* line)
+{
+	uint8_t c;
+	uint8_t entity[64];
+	int i = 0;
+	int entity_i = 0;
+	int in_entity=0;
+
+	while ((c = txt_getch(txtFile)))
+	{
+
+		if (CHAR_IS_LINEEND(c)) break;
+		if (CHAR_IS_ENTITYSTART(c)) in_entity=1;
+		if (CHAR_IS_ENTITYEND(c)) {
+			in_entity=0;
+			entity[entity_i++] = c; // we need the ; added to the end
+			entity[entity_i++] = 0; 
+			entity_i=0;
+			line[i++]=lookup_entity((const char *)entity);
+		}
+		else if (!in_entity) 
+			line[i++] = c;
+		else
+		{
+			if (entity_i<63) 
+			{
+				entity[entity_i++] = c;
+				entity[entity_i] = 0;
+			}
+		}
+	}
+	line[i] = '\0';
+	return c == 0;
+}
+
+
+void OsdDisplayFileSet(const char *filename)
+{
+	textFirstEntry = 0;
+
+	if (strncasecmp(lastFileName,filename,1024)) 
+	{
+		fprintf(stderr,"load new help file..\n");
+		strcpy(lastFileName,filename);
+
+		textFile.clear();
+		textFirstEntry=0;
+		fileTYPE txtFile={};
+		if (FileOpen(&txtFile,user_io_make_filepath(HomeDir(),filename)))
+		{
+			txt_pt=0; // reset our text reader
+			int line_status=0;
+			do 
+			{
+				textline txt;
+				line_status = txt_getline(&txtFile,txt.line);
+				textFile.push_back(txt);
+
+			} while (line_status==0);
+				
+		}
+		else
+		{
+			textline txt;
+			sprintf((char *)txt.line,"File not found: %s\n",filename);
+			textFile.push_back(txt);
+			for (int i=1;i<256;i++) {
+			textline txt;
+			sprintf((char *)txt.line,"%x: %c\n",i,i);
+			textFile.push_back(txt);
+			}
+		}
+
+	}
+	
+}
+
+void OsdDisplayFileMove(int dir) 
+{
+	if (textFile.size() < OsdGetSize()) return;
+	textFirstEntry+=dir;
+	if (textFirstEntry>(textFile.size() - OsdGetSize()) ) textFirstEntry=textFile.size()-OsdGetSize();
+	if (textFirstEntry<0) textFirstEntry=0;
+}
+void OsdDisplayFile()
+{
+
+	int i = 0;
+	unsigned int k = textFirstEntry;
+	while (i < OsdGetSize())
+	{
+		if (k < textFile.size())
+		{
+
+			int sel = 0;
+			int leftchar=0;
+
+			if (!i && k) leftchar = 17;
+			if (i && k < textFile.size() - 1) leftchar = 16;
+			OsdWriteOffset(i,(const char *)textFile[k].line,sel,0,0,leftchar);
+			i++;
+
+		}
+		else 
+		{
+			OsdWriteOffset(i,"",0,0,0,0);
+			i++;
+		}
+
+		k++;
+		
+	}
+
 }

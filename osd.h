@@ -32,6 +32,9 @@ void ScrollText(char n, const char *str, int off, int len, int max_len, unsigned
 void ScrollReset(int idx = 0);
 void StarsInit();
 void StarsUpdate();
+void OsdDisplayFileMove(int dir);
+void OsdDisplayFileSet(const char *filename);
+void OsdDisplayFile();
 void OsdShiftDown(unsigned char n);
 
 // get/set core currently loaded
@@ -41,6 +44,12 @@ void OsdSetSize(int n);
 int OsdGetSize();
 
 #define OsdIsBig (OsdGetSize()>8)
+
+
+struct textline
+{
+	uint8_t line[160];
+};
 
 #endif
 

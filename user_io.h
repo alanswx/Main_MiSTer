@@ -266,6 +266,7 @@ void diskled_on();
 
 char is_minimig();
 char is_sharpmz();
+char is_menu_frontend();
 char is_menu();
 char is_x86();
 char is_snes();

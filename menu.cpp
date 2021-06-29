@@ -88,6 +88,13 @@ enum MENU
 	MENU_RESET1,
 	MENU_RESET2,
 
+
+	MENU_HELP1,
+	MENU_HELP2,
+
+	MENU_HELPTEXT1,
+	MENU_HELPTEXT2,
+
 	MENU_JOYSYSMAP,
 	MENU_JOYDIGMAP,
 	MENU_JOYDIGMAP1,
@@ -1197,8 +1204,8 @@ void HandleUI(void)
 			recent = true;
 			break;
 		}
+//fprintf(stderr,"AJS: up %d down %d left %d right %d \n",up,down,left,right);
 	}
-
 	if (menu || select || up || down || left || right || (helptext_idx_old != helptext_idx))
 	{
 		helptext_idx_old = helptext_idx;
@@ -3107,7 +3114,7 @@ void HandleUI(void)
 		helptext_idx = 0;
 		menumask = 0xF;
 		menustate = MENU_MISC2;
-		OsdSetTitle("Misc. Options", OSD_ARROW_RIGHT);
+		OsdSetTitle("Misc. Options", OSD_ARROW_RIGHT|OSD_ARROW_LEFT);
 
 		if (parentstate != MENU_MISC1)
 		{
@@ -3166,7 +3173,7 @@ void HandleUI(void)
 		}
 		OsdWrite(13, s, menusub == 2);
 
-		OsdWrite(15, STD_EXIT, menusub == 3, 0, OSD_ARROW_RIGHT);
+		OsdWrite(15, STD_EXIT, menusub == 3, 0, OSD_ARROW_RIGHT| OSD_ARROW_LEFT);
 		break;
 
 	case MENU_MISC2:
@@ -3204,6 +3211,10 @@ void HandleUI(void)
 		{
 			set_volume((right || plus) ? 1 : (left || minus) ? -1 : 0);
 			menustate = MENU_MISC1;
+		}
+		else if (left)
+		{
+			menustate = MENU_HELP1;
 		}
 		else if (right)
 		{
@@ -3243,6 +3254,137 @@ void HandleUI(void)
 				break;
 			}
 		}
+		break;
+	case MENU_HELP1:
+		OsdSetSize(16);
+		helptext_idx = 0;
+		menumask =  0;
+		//menumask = 0xFF;
+		OsdSetTitle("About" );
+	
+		if (parentstate != MENU_HELP1)
+		{
+			for (int i = 0; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
+			flag = 1;
+			for (int i = 1; i < 4; i++) if (FileExists(cfg_get_name(i))) flag |= 1 << i;
+			flag |= altcfg() << 4;
+			menusub = 3;
+		}
+
+		parentstate = MENU_HELP1;
+		menustate=MENU_HELP2;
+		char tempstr[1024];
+		sprintf(tempstr,"     %s Help",OsdCoreNameGet());
+		OsdWrite(0, tempstr);
+		OsdWrite(1, "         ");
+		menumask |=  1 ;
+		OsdWrite(2, "  Help",menusub==0);
+		menumask |= ( 1 << 1);
+		OsdWrite(3, "  Credits",menusub==1);
+		menumask |= ( 1 << 2);
+		OsdWrite(4, "  How to Play",menusub==2);
+#if 1
+		OsdWrite(8, "Special Chars:");
+		OsdWrite(9, "\x87\x87\x87\x87\x87\x87\x87\x87\x87\x87\x87\x87\x87\x87");
+		OsdWrite(10, "01:  \x01  02: \x02  03: \x03   04: \04");
+		OsdWrite(11, "80:  \x80  81:  \x81  82: \x82  83: \x83");
+		OsdWrite(12, "84:  \x84  85: \x85  86: \x86");
+		OsdWrite(13, "87:  \x87  88: \x88  89: \x89");
+		OsdWrite(14, "14:  \x14  15:  \x15  16: \x16  17: \x17");
+#endif
+		menumask |= ( 1 << 3);
+		OsdWrite(15, STD_EXIT, menusub == 3, 0, OSD_ARROW_RIGHT );
+		
+		break;
+	case MENU_HELP2:
+
+		if ((select && menusub == 3) || menu) {
+			menustate = MENU_NONE1;
+		}
+		else if (select && (menusub == 0) )
+		{
+			fprintf(stderr,"AJS: %s\n",CoreName);
+			menustate = MENU_HELPTEXT1;
+			OsdSetTitle("Help" );
+			OsdDisplayFileSet("help.txt");
+			break;
+		}
+		else if (select && (menusub == 1) )
+		{
+			OsdDisplayFileSet("credits.txt");
+			OsdSetTitle("Credits" );
+			menustate = MENU_HELPTEXT1;
+			break;
+		}
+		else if (select && (menusub == 2) )
+		{
+			OsdDisplayFileSet("howto.txt");
+			OsdSetTitle("How To" );
+			menustate = MENU_HELPTEXT1;
+			break;
+		}
+		else  if (right) {
+			  menustate=MENU_MISC1;
+		  }
+		break;
+	case MENU_HELPTEXT1:
+		OsdSetSize(16);
+		helptext_idx = 0;
+		//menumask = 0x7F;
+		menumask = 0xFF;
+	
+		if (parentstate != MENU_HELP1)
+		{
+			for (int i = 0; i < OsdGetSize() - 1; i++) OsdWrite(i, "", 0, 0);
+			flag = 1;
+			for (int i = 1; i < 4; i++) if (FileExists(cfg_get_name(i))) flag |= 1 << i;
+			flag |= altcfg() << 4;
+			menusub = 3;
+		}
+
+		parentstate = MENU_HELPTEXT2;
+				fprintf(stderr,"AJS: up %d down %d\n",up,down);
+		OsdDisplayFile();
+		menustate=MENU_HELPTEXT2;
+		break;
+	case MENU_HELPTEXT2:
+
+		if ( menu)
+		{
+			menustate = MENU_HELP1;
+			break;
+		}
+		else  if (right) {
+			  menustate=MENU_HELP1;
+		  }
+		  
+			if (down) // scroll down one entry
+			{
+				fprintf(stderr,"AJS: DOWN\n");
+				OsdDisplayFileMove(1);
+				menustate = MENU_HELPTEXT1;
+
+			}
+
+			if (up) // scroll up one entry
+			{
+				fprintf(stderr,"AJS: UP\n");
+				OsdDisplayFileMove(-1);
+				menustate = MENU_HELPTEXT1;
+			}
+			if ((c == KEY_PAGEUP) )
+			{
+				fprintf(stderr,"AJS: PAGEUP\n");
+				OsdDisplayFileMove(-1 * OsdGetSize());
+				menustate = MENU_HELPTEXT1;
+			}
+
+			if ((c == KEY_PAGEDOWN) )
+			{
+				fprintf(stderr,"AJS: PAGEDOWN\n");
+				OsdDisplayFileMove(OsdGetSize());
+				menustate = MENU_HELPTEXT1;
+			}
 		break;
 
 	case MENU_JOYRESET:
@@ -4428,6 +4570,229 @@ void HandleUI(void)
 				ScanDirectory(selPath, SCANF_END, fs_pFileExt, fs_Options);
 				menustate = MENU_FILE_SELECT1;
 			}
+<<<<<<< Updated upstream
+=======
+			else if (select)
+			{
+				if (menusub == 5)	// Go to harddrives page.
+				{
+					menustate = MENU_MINIMIG_HARDFILE1;
+					menusub = 0;
+				}
+				else if (menusub == 6)
+				{
+					menustate = MENU_MINIMIG_CHIPSET1;
+					menusub = 0;
+				}
+				else if (menusub == 7)
+				{
+					menustate = MENU_MINIMIG_MEMORY1;
+					menusub = 0;
+				}
+				else if (menusub == 8)
+				{
+					menustate = MENU_MINIMIG_VIDEO1;
+					menusub = 0;
+				}
+				else if (menusub == 9)
+				{
+					menusub = 0;
+					menustate = MENU_MT32PI_MAIN1;
+				}
+				else if (menusub == 10)
+				{
+					menusub = 0;
+					menustate = MENU_MINIMIG_SAVECONFIG1;
+				}
+				else if (menusub == 11)
+				{
+					menusub = 0;
+					menustate = MENU_MINIMIG_LOADCONFIG1;
+				}
+				else if (menusub == 12)
+				{
+					menustate = MENU_NONE1;
+					minimig_reset();
+				}
+				else if (menusub == 13)
+				{
+					menustate = MENU_NONE1;
+				}
+			}
+		}
+		else if (c == KEY_BACKSPACE) // eject all floppies
+		{
+			for (int i = 0; i <= drives; i++) df[i].status = 0;
+			menustate = MENU_MINIMIG_MAIN1;
+		}
+		else if (right)
+		{
+			menustate = MENU_COMMON1;
+			menusub = 0;
+		}
+		else if (left)
+		{
+			menustate = MENU_MISC1;
+			menusub = 3;
+		}
+		break;
+
+	case MENU_MINIMIG_ADFFILE_SELECTED:
+		memcpy(Selected_F[menusub], selPath, sizeof(Selected_F[menusub]));
+		recent_update(SelectedDir, selPath, SelectedLabel, 0);
+		InsertFloppy(&df[menusub], selPath);
+		if (menusub < drives) menusub++;
+		menustate = MENU_MINIMIG_MAIN1;
+		break;
+
+	case MENU_MINIMIG_LOADCONFIG1:
+		helptext_idx = 0;
+		if (parentstate != menustate) menumask = 0x400;
+
+		parentstate = menustate;
+		OsdSetTitle("Load config", 0);
+
+		m = 0;
+		OsdWrite(m++, "", 0, 0);
+		OsdWrite(m++, " Startup config:");
+		for (uint i = 0; i < 10; i++)
+		{
+			const char *info = minimig_get_cfg_info(i, menusub != i);
+			static char name[128];
+
+			if (info)
+			{
+				menumask |= 1 << i;
+				sprintf(name, "  %s", strlen(info) ? info : "NO INFO");
+				char *p = strchr(name, '\n');
+				if (p) *p = 0;
+				OsdWrite(m++, name, menusub == i);
+
+				if (menusub == i && p)
+				{
+					sprintf(name, "  %s", strchr(info, '\n') + 1);
+					OsdWrite(m++, name, 1, !(menumask & (1 << i)));
+				}
+			}
+
+			if (!i)
+			{
+				OsdWrite(m++, "", 0, 0);
+				m = 4;
+				OsdWrite(m++, " Other configs:");
+			}
+		}
+
+		while(m < OsdGetSize() - 1) OsdWrite(m++);
+		OsdWrite(OsdGetSize() - 1, STD_EXIT, menusub == 10, 0);
+
+		menustate = MENU_MINIMIG_LOADCONFIG2;
+		break;
+
+	case MENU_MINIMIG_LOADCONFIG2:
+		if (down)
+		{
+			if (menusub < 9) menusub++;
+			menustate = MENU_MINIMIG_LOADCONFIG1;
+		}
+		else if (select)
+		{
+			if (menusub<10)
+			{
+				OsdDisable();
+				minimig_cfg_load(menusub);
+				menustate = MENU_NONE1;
+			}
+			else
+			{
+				menustate = MENU_MINIMIG_MAIN1;
+				menusub = 11;
+			}
+		}
+		if (menu || left) // exit menu
+		{
+			menustate = MENU_MINIMIG_MAIN1;
+			menusub = 11;
+		}
+		break;
+
+		/******************************************************************/
+		/* file selection menu                                            */
+		/******************************************************************/
+	case MENU_FILE_SELECT1:
+		helptext_idx = (fs_Options & SCANO_UMOUNT) ? HELPTEXT_EJECT : 0;
+		OsdSetTitle((fs_Options & SCANO_CORES) ? "Cores" : "Select", 0);
+		PrintDirectory(hold_cnt<2);
+		menustate = MENU_FILE_SELECT2;
+		fprintf(stderr,"AJS MENU_FILE_SELECT1: ismenu[%d] [%s] [%s]\n",is_menu(),selPath,flist_SelectedItem()->de.d_name);
+		break;
+
+	case MENU_FILE_SELECT2:
+		menumask = 0;
+
+		if (c == KEY_BACKSPACE && (fs_Options & SCANO_UMOUNT) && !strlen(filter))
+		{
+			for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
+			OsdWrite(OsdGetSize() / 2, "    Unmounting the image", 0, 0);
+			OsdUpdate();
+			sleep(1);
+			input_poll(0);
+			menu_key_set(0);
+			selPath[0] = 0;
+			menustate = fs_MenuSelect;
+			helptext_idx = 0;
+			break;
+		}
+
+		if (menu)
+		{
+			if (flist_nDirEntries() && flist_SelectedItem()->de.d_type != DT_DIR)
+			{
+				SelectedDir[0] = 0;
+				if (strlen(selPath))
+				{
+					strcpy(SelectedDir, selPath);
+					strcat(selPath, "/");
+				}
+				strcat(selPath, flist_SelectedItem()->de.d_name);
+			}
+
+			if (!strcasecmp(fs_pFileExt, "RBF")) selPath[0] = 0;
+			menustate = fs_MenuCancel;
+			helptext_idx = 0;
+		}
+
+		if (recent && recent_init((fs_Options & SCANO_CORES) ? -1 : (fs_Options & SCANO_UMOUNT) ? ioctl_index + 500 : ioctl_index))
+		{
+			menustate = MENU_RECENT1;
+		}
+
+		if (c == KEY_BACKSPACE)
+		{
+			filter[0] = 0;
+			filter_typing_timer = 0;
+			ScanDirectory(selPath, SCANF_INIT, fs_pFileExt, fs_Options);
+			menustate = MENU_FILE_SELECT1;
+		}
+
+		if (flist_nDirEntries())
+		{
+			ScrollLongName(); // scrolls file name if longer than display line
+
+			if (c == KEY_HOME)
+			{
+				filter_typing_timer = 0;
+				ScanDirectory(selPath, SCANF_INIT, fs_pFileExt, fs_Options);
+				menustate = MENU_FILE_SELECT1;
+			}
+
+			if (c == KEY_END)
+			{
+				filter_typing_timer = 0;
+				ScanDirectory(selPath, SCANF_END, fs_pFileExt, fs_Options);
+				menustate = MENU_FILE_SELECT1;
+			}
+>>>>>>> Stashed changes
 
 			if ((c == KEY_PAGEUP) || (c == KEY_LEFT))
 			{
@@ -4511,6 +4876,7 @@ void HandleUI(void)
 				{
 					changeDir(name);
 					menustate = MENU_FILE_SELECT1;
+					fprintf(stderr,"AJS - MENU_FILE_SELECT2 - change into dir: [%s] [%s]",selPath,flist_SelectedItem()->de.d_name);
 				}
 				else
 				{
