@@ -116,6 +116,8 @@ enum MENU
 	MENU_SCRIPTS1,
 	MENU_SCRIPTS_FB,
 	MENU_SCRIPTS_FB2,
+	MENU_PDF_FILE_SELECTED,
+	MENU_PDF_FILE_SELECTED_2,
 
 	MENU_CHEATS1,
 	MENU_CHEATS2,
@@ -2271,7 +2273,7 @@ void HandleUI(void)
 			while(1)
 			{
 				n = 0;
-				menumask = 0x3800f;
+				menumask = 0x7800f;
 
 				if (!menusub) firstmenu = 0;
 				adjvisible = 0;
@@ -2382,10 +2384,12 @@ void HandleUI(void)
 				MenuWrite(n++);
 				cr = n;
 				MenuWrite(n++, " Reboot (hold \x16 cold reboot)", menusub == 15);
-				MenuWrite(n++, " About", menusub == 16);
+				//MenuWrite(n++, " Help", menusub == 16);
+				MenuWrite(n++, " Help                      \x16", menusub == 16);
+				MenuWrite(n++, " About", menusub == 17);
 
 				while(n < OsdGetSize() - 1) MenuWrite(n++);
-				MenuWrite(n++, STD_EXIT, menusub == 17, 0, OSD_ARROW_LEFT);
+				MenuWrite(n++, STD_EXIT, menusub == 18, 0, OSD_ARROW_LEFT);
 				sysinfo_timer = 0;
 
 				if (!adjvisible) break;
@@ -2581,6 +2585,10 @@ void HandleUI(void)
 				break;
 
 			case 16:
+				Selected_tmp[0]=0;
+				SelectFile(Selected_tmp, "PDF", 0, MENU_PDF_FILE_SELECTED, MENU_COMMON1);
+				break;
+			case 17:
 				menustate = MENU_ABOUT1;
 				menusub = 0;
 				break;
@@ -2627,6 +2635,49 @@ void HandleUI(void)
 		if(!hold_cnt && reboot_req) fpga_load_rbf("menu.rbf");
 		break;
 
+	case MENU_PDF_FILE_SELECTED:
+		if (cfg.fb_terminal)
+		{
+			memcpy(Selected_tmp, selPath, sizeof(Selected_tmp));
+			static char cmd[1024 * 2];
+			const char *path = getFullPath(selPath);
+			menustate = MENU_PDF_FILE_SELECTED_2;
+			video_chvt(2);
+			video_fb_enable(1);
+			vga_nag();
+			sprintf(cmd, "#!/bin/bash\nexport LC_ALL=en_US.UTF-8\nexport HOME=/root\ncd $(dirname %s)\n/media/fat/fbpdf2 \"%s\"\necho \"Press any key to continue\"\n", path, path);
+			unlink("/tmp/script");
+			FileSave("/tmp/script", cmd, strlen(cmd));
+			ttypid = fork();
+			if (!ttypid)
+			{
+				execl("/sbin/agetty", "/sbin/agetty", "-a", "root", "-l", "/tmp/script", "--nohostname", "-L", "tty2", "linux", NULL);
+				exit(0); //should never be reached
+			}
+		}
+		break;
+	case MENU_PDF_FILE_SELECTED_2:
+		if (ttypid)
+		{
+			if (waitpid(ttypid, 0, WNOHANG) > 0)
+			{
+				ttypid = 0;
+				user_io_osd_key_enable(1);
+			}
+		}
+		else
+		{
+			if (c & UPSTROKE)
+			{
+				video_menu_bg((user_io_8bit_set_status(0, 0) & 0xE) >> 1);
+				video_fb_enable(0);
+				menustate = MENU_NONE1;
+				menusub = 3;
+				OsdClear();
+				OsdEnable(DISABLE_KEYBOARD);
+			}
+		}
+		break;
 	case MENU_ARCADE_DIP1:
 		helptext_idx = 0;
 		menumask = 0;
@@ -5734,7 +5785,7 @@ void HandleUI(void)
 
 		m = 0;
 		OsdSetTitle("System Settings", OSD_ARROW_LEFT);
-		menumask = 0x3F;
+		menumask = 0x7F;
 
 		OsdWrite(m++);
 		sprintf(s, "       MiSTer v%s", version + 5);
@@ -5786,15 +5837,16 @@ void HandleUI(void)
 		OsdWrite(m++, " Remap keyboard            \x16", menusub == 1);
 		OsdWrite(m++, " Define joystick buttons   \x16", menusub == 2);
 		OsdWrite(m++, " Scripts                   \x16", menusub == 3);
+		OsdWrite(m++, " Help                      \x16", menusub == 4);
 		OsdWrite(m++, "");
 		cr = m;
-		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 4);
+		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 5);
 		sysinfo_timer = 0;
 
 		reboot_req = 0;
 
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 5);
+		OsdWrite(15, STD_EXIT, menusub == 6);
 		menustate = MENU_SYSTEM2;
 		break;
 
@@ -5847,6 +5899,10 @@ void HandleUI(void)
 				break;
 
 			case 4:
+				Selected_tmp[0]=0;
+				SelectFile(Selected_tmp, "PDF", 0, MENU_PDF_FILE_SELECTED, MENU_NONE1);
+				break;
+			case 5:
 				{
 					reboot_req = 1;
 
@@ -5859,7 +5915,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 5:
+			case 6:
 				menustate = MENU_NONE1;
 				break;
 			}
