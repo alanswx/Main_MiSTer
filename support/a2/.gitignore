@@ -1,0 +1,5 @@
+# Native test/tool build artifacts (host builds, not part of the MiSTer binary)
+tests/test_iigs_fmt
+tools/iigs_convert
+*.dSYM/
+# Keep regression reference images (tools/regression_images/*.png) tracked.
