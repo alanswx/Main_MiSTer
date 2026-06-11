@@ -29,3 +29,6 @@ host
 .vs
 MiSTer
 /bin
+
+# Local IIgs scratch/fixtures (disk images + nested sim repo) — not for commit
+artifacts_for_iigs/
