@@ -17,9 +17,14 @@
 //   mode 0 = hard disk, raw blocks at hdr_off (2MG/DC42)
 //   mode 1 = converted floppy, served from the in-memory woz buffer (read-only)
 static int        g_mode[16]    = {};
-static int64_t  g_hdr_off[16] = {};
-static uint8_t   *g_woz[16]     = {};
-static size_t     g_woz_sz[16]  = {};
+static int64_t    g_hdr_off[16]  = {};
+static uint8_t   *g_woz[16]      = {};
+static size_t     g_woz_sz[16]   = {};
+// Converted-floppy write-back descriptor (mode 1):
+static int        g_wb_ok[16]    = {};  // write-back supported (and file writable)
+static int        g_wb_kind[16]  = {};  // 1 = 3.5", 2 = 5.25"
+static int64_t    g_wb_off[16]   = {};  // header offset within the source file
+static int        g_wb_order[16] = {};  // 5.25 source order: 0 = DOS, 1 = ProDOS
 
 // IIgs slot kinds: 0,1 = hard disk; 2 = 3.5"; 3 = 5.25". -1 = not an IIgs slot.
 static int slot_kind(int index)
@@ -51,6 +56,10 @@ void iigs_unmount(int index)
 	g_woz_sz[index] = 0;
 	g_hdr_off[index] = 0;
 	g_mode[index] = 0;
+	g_wb_ok[index] = 0;
+	g_wb_kind[index] = 0;
+	g_wb_off[index] = 0;
+	g_wb_order[index] = 0;
 }
 
 // Read the entire open image into a freshly malloc'd buffer (caller frees).
@@ -197,17 +206,40 @@ int iigs_mount(int index, const char *name, fileTYPE *f, int *out_writable)
 	uint8_t *raw = read_all(f, &raw_len);
 	if (!raw) { reject("Could not read the disk image."); return IIGS_REJECT; }
 
+	// Determine the write-back descriptor before consuming `raw`.
+	int wb_off = 0, wb_order = (kind == 1) ? 1 : 0, wb_ok = 0;
+	TwoMG mm;
+	if (twomg_parse(raw, raw_len, &mm)) {
+		wb_off = (int)mm.data_offset;
+		if (mm.format == 2)      wb_ok = 0;                       // NIB payload: read-only
+		else { wb_ok = 1; if (kind == 2) wb_order = (mm.format == 1); }
+	} else if (dc42_probe(raw, raw_len)) {
+		wb_ok = 0;                                                // DC42: read-only (stale checksum)
+	} else if (raw_len == A2_NIB_IMAGE_SIZE) {
+		wb_ok = 0;                                                // .nib: read-only (v1)
+	} else if (kind == 2 && eqi(ext, "po")) {
+		wb_ok = 1; wb_order = 1;                                  // ProDOS-order 140K
+	} else {
+		wb_ok = 1; if (kind == 2) wb_order = 0;                   // raw .po(800K) / .do / .dsk
+	}
+	if (!FileCanWrite(name)) wb_ok = 0;
+
 	size_t woz_sz = 0;
 	uint8_t *woz = build_woz(kind, ext, raw, raw_len, &woz_sz);
 	free(raw);
 	if (!woz) { reject("Could not convert this disk to WOZ."); return IIGS_REJECT; }
 
-	g_mode[index]   = 1;
-	g_woz[index]    = woz;
-	g_woz_sz[index] = woz_sz;
+	g_mode[index]    = 1;
+	g_woz[index]     = woz;
+	g_woz_sz[index]  = woz_sz;
+	g_wb_ok[index]   = wb_ok;
+	g_wb_kind[index] = kind;
+	g_wb_off[index]  = wb_off;
+	g_wb_order[index] = wb_order;
 	f->size = (int64_t)woz_sz;            // core sees the WOZ size
-	*out_writable = 0;                       // converted floppies are read-only (v1)
-	printf("IIgs: floppy slot %d converted to WOZ (%zu bytes), read-only\n", index, woz_sz);
+	*out_writable = wb_ok;                // writable only if write-back is supported
+	printf("IIgs: floppy slot %d converted to WOZ (%zu bytes), %s\n",
+	       index, woz_sz, wb_ok ? "read-write (write-back)" : "read-only");
 	return IIGS_HANDLED;
 }
 
@@ -237,9 +269,43 @@ void iigs_write(int disk, fileTYPE *f, uint64_t lba, int ack)
 	spi_block_read(chunk, user_io_get_width(), 512);
 	DisableIO();
 
-	// Only hard disks are writable in v1; converted WOZ floppies are read-only.
 	if (g_mode[disk] == 0) {
+		// Hard disk: write straight back to the file at the header offset.
 		if (FileSeek(f, (int64_t)(lba * 512 + g_hdr_off[disk]), SEEK_SET))
 			FileWriteAdv(f, chunk, 512);
+		return;
+	}
+
+	// Converted floppy: update the in-memory WOZ, then (if write-back is
+	// supported) decode the affected track and persist it to the source image.
+	uint64_t off = lba * 512;
+	if (g_woz[disk] && off + 512 <= g_woz_sz[disk]) memcpy(g_woz[disk] + off, chunk, 512);
+	if (!g_wb_ok[disk]) return;
+
+	int t = a2_woz_track_for_lba(g_woz[disk], g_woz_sz[disk], (uint32_t)lba);
+	if (t < 0) return;   // header block (TMAP/TRKS dir) — nothing to persist
+
+	if (g_wb_kind[disk] == 1) {
+		// 3.5": decode the track's ProDOS blocks, write that block range back.
+		static uint8_t po[A2_35_IMAGE_SIZE];
+		int base = 0, cnt = 0;
+		if (a2_woz35_decode_track(g_woz[disk], g_woz_sz[disk], t, po, &base, &cnt) > 0) {
+			if (FileSeek(f, g_wb_off[disk] + (int64_t)base * 512, SEEK_SET))
+				FileWriteAdv(f, po + (size_t)base * 512, (size_t)cnt * 512);
+		}
+	} else {
+		// 5.25": decode the DOS-order track; re-skew to ProDOS if the source is .po.
+		static uint8_t dsk[A2_525_IMAGE_SIZE];
+		if (a2_woz525_decode_track(g_woz[disk], g_woz_sz[disk], t, dsk) > 0) {
+			static const int D2P[16] = { 0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15 };
+			uint8_t out[A2_TRACK_SIZE];
+			const uint8_t *src = dsk + (size_t)t * A2_TRACK_SIZE;
+			if (g_wb_order[disk] == 1)
+				for (int s = 0; s < 16; s++) memcpy(out + D2P[s] * 256, src + s * 256, 256);
+			else
+				memcpy(out, src, A2_TRACK_SIZE);
+			if (FileSeek(f, g_wb_off[disk] + (int64_t)t * A2_TRACK_SIZE, SEEK_SET))
+				FileWriteAdv(f, out, A2_TRACK_SIZE);
+		}
 	}
 }

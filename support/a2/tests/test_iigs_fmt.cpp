@@ -301,6 +301,74 @@ static void test_po_woz35_real(void)
 }
 
 // --------------------------------------------------------------------------
+// per-track decode (write-back building blocks)
+// --------------------------------------------------------------------------
+static void test_per_track_decode(void)
+{
+	banner("per-track decode matches whole-disk decode");
+
+	// 3.5: build woz, decode track-by-track, compare to whole-disk decode.
+	{
+		uint8_t *po = synth(A2_35_IMAGE_SIZE);
+		uint8_t *woz = (uint8_t *)malloc(2 * 1024 * 1024);
+		size_t wsz = a2_po_to_woz35(woz, 2 * 1024 * 1024, po);
+		uint8_t *whole = (uint8_t *)calloc(1, A2_35_IMAGE_SIZE);
+		uint8_t *piece = (uint8_t *)calloc(1, A2_35_IMAGE_SIZE);
+		a2_woz35_to_po(whole, woz, wsz);
+		for (int nt = 0; nt < 160; nt++) {
+			int base = -1, cnt = -1;
+			a2_woz35_decode_track(woz, wsz, nt, piece, &base, &cnt);
+			CHECK(base >= 0 && cnt > 0, "3.5 track %d base/count", nt);
+		}
+		CHECK(memcmp(whole, piece, A2_35_IMAGE_SIZE) == 0, "3.5 per-track != whole");
+		CHECK(memcmp(po, piece, A2_35_IMAGE_SIZE) == 0, "3.5 per-track != source");
+		// LBA mapping: first data block (block 3) belongs to track 0.
+		CHECK(a2_woz_track_for_lba(woz, wsz, 3) == 0, "3.5 lba->track");
+		free(po); free(woz); free(whole); free(piece);
+	}
+
+	// 5.25: same idea.
+	{
+		uint8_t *dsk = synth(A2_525_IMAGE_SIZE);
+		uint8_t *woz = (uint8_t *)malloc(512 * 1024);
+		size_t wsz = a2_dsk_to_woz525(woz, 512 * 1024, dsk);
+		uint8_t *piece = (uint8_t *)calloc(1, A2_525_IMAGE_SIZE);
+		for (int t = 0; t < 35; t++)
+			CHECK(a2_woz525_decode_track(woz, wsz, t, piece) == 16, "5.25 track %d sectors", t);
+		CHECK(memcmp(dsk, piece, A2_525_IMAGE_SIZE) == 0, "5.25 per-track != source");
+		CHECK(a2_woz_track_for_lba(woz, wsz, 3) == 0, "5.25 lba->track");
+		free(dsk); free(woz); free(piece);
+	}
+}
+
+// --------------------------------------------------------------------------
+// write-back reconstruction (mirrors iigs_disk.cpp's per-track persist)
+// --------------------------------------------------------------------------
+static void test_writeback_reskew(void)
+{
+	banner("write-back reconstructs the source image");
+	static const int D2P[16] = { 0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15 };
+
+	// 5.25 ProDOS source: po -> dos -> woz, then decode+re-skew back to po.
+	uint8_t *po = synth(A2_525_IMAGE_SIZE);
+	uint8_t *dos = (uint8_t *)malloc(A2_525_IMAGE_SIZE);
+	a2_prodos_to_dos(dos, po);
+	uint8_t *woz = (uint8_t *)malloc(512 * 1024);
+	size_t wsz = a2_dsk_to_woz525(woz, 512 * 1024, dos);
+
+	uint8_t *recon = (uint8_t *)calloc(1, A2_525_IMAGE_SIZE);
+	uint8_t *dsk = (uint8_t *)calloc(1, A2_525_IMAGE_SIZE);
+	for (int t = 0; t < 35; t++) {
+		a2_woz525_decode_track(woz, wsz, t, dsk);
+		const uint8_t *src = dsk + t * A2_TRACK_SIZE;
+		for (int s = 0; s < 16; s++)
+			memcpy(recon + t * A2_TRACK_SIZE + D2P[s] * 256, src + s * 256, 256);
+	}
+	CHECK(memcmp(po, recon, A2_525_IMAGE_SIZE) == 0, "5.25 ProDOS write-back != source");
+	free(po); free(dos); free(woz); free(recon); free(dsk);
+}
+
+// --------------------------------------------------------------------------
 // classification
 // --------------------------------------------------------------------------
 static const char *clsname(DiskClass c)
@@ -365,6 +433,8 @@ int main(int argc, char **argv)
 	test_dsk_woz_roundtrip();
 	test_po_woz35_roundtrip();
 	test_po_woz35_real();
+	test_per_track_decode();
+	test_writeback_reskew();
 	test_classify_real();
 
 	printf("\n----------------------------------------\n");

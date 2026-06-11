@@ -25,7 +25,7 @@ to one of the two native formats — without breaking copy protection on native 
 | Auto-routing | **Never.** A disk is only ever mounted in the slot the user picked, or blocked with guidance. No disk is ever silently moved. |
 | WOZ normalization | **No** — native `.woz` is served byte-for-byte (flat block I/O). Rewriting risks breaking copy protection. |
 | Converter architecture | **On-the-fly** per-LBA translation (the live `SD_TYPE_A2` pattern), **not** one-shot temp files. |
-| Converted-floppy write-back | **v2** — design toward a trivially reversible "easy WOZ"; v1 may mount converted floppies read-only. |
+| Converted-floppy write-back | **Implemented.** On each core write the affected WOZ track is decoded and persisted back to the source `.po/.dsk/.do/.2mg` (per-track, re-skewed to ProDOS where needed). `.nib`/DC42 sources stay read-only. |
 | DiskCopy 4.2 (DC42) | **Demoted.** Mac-native format IIgs software essentially never ships as; kept only as a cheap `probeDC42()` content-detected fallback, no dedicated fixtures/effort (§10, §12). |
 | Dead code | Remove unused `dsk2nib()` from `DiskImage.cpp` (see §9). |
 
@@ -314,9 +314,13 @@ back to the source `.dsk`/`.po` — the same model as the live `a2_writeNib2Dsk`
   MAME / CiderPress2 / Applesauce reference code rather than deriving.
 
 **Phasing:**
-- **v1:** converted floppies are **read-only** (synthesize easy-WOZ for reads; ignore/deny
-  writes). Native `.woz` writes as far as §8.2 allows.
-- **v2:** enable the WOZ→source decode-on-write round-trip for converted floppies.
+- **v1:** converted floppies are read-only.
+- **v2 (done):** write-back enabled. On each block write the affected WOZ track is located
+  (`a2_woz_track_for_lba`), decoded (`a2_woz35_decode_track` / `a2_woz525_decode_track`), and
+  the resulting sectors are written to the source file — at the 2MG/DC42 header offset, and
+  re-skewed DOS→ProDOS for `.po` 5.25 sources. Persisted per-write (survives no clean eject);
+  unwritten blocks of an in-progress track still hold valid prior data, so partial-track
+  writes converge correctly. `.nib` and DC42 sources remain read-only (DC42 = stale-checksum).
 
 ---
 
@@ -345,7 +349,8 @@ The Makefile globs `support/*/*.cpp`, so new files in `support/a2/` need no Make
 4. **Native WOZ** — pass-through mount on S2/S3 with class validation (read; constrained write per §8.2).
 5. **5.25″ conversion** — easy-WOZ encoder reusing the nibblizer; read-only (v1).
 6. **3.5″ conversion** — zoned GCR easy-WOZ encoder; read-only (v1). **Done — boots GS/OS in sim.**
-7. **v2** — write round-trip for converted floppies; DC42 checksum rewrite on eject.
+7. **v2 — done** — write round-trip for converted floppies (per-track decode → source).
+   Remaining v2+: DC42 checksum rewrite on eject (to make DC42 floppies writable too).
 
 > **Codec status:** the pure codec (`support/a2/iigs_fmt.{h,cpp}`) for phases 2/4/5/6 is
 > written and tested (native round-trips + sim boot).
