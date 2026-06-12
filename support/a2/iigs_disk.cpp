@@ -190,7 +190,29 @@ int iigs_mount(int index, const char *name, fileTYPE *f, int *out_writable)
 			                 : "That's a 3.5\" WOZ — use the 3.5\" drive.");
 			return IIGS_REJECT;
 		}
-		return IIGS_PASSTHRU;   // native WOZ: serve the file directly
+
+		// A zip-backed file is a forward-only decompression stream: every
+		// backward seek re-inflates from the start, which is far too slow for
+		// the WOZ controller's random track access and breaks flux-timing
+		// copy protection (e.g. Karateka). Load the WOZ verbatim into RAM and
+		// serve from there — byte-for-byte identical, no conversion, so the
+		// protection is preserved. Regular files keep fast random access via
+		// the passthrough path below.
+		if (f->zip) {
+			size_t n = 0;
+			uint8_t *buf = read_all(f, &n);
+			if (!buf) { reject("Could not read the WOZ from the archive."); return IIGS_REJECT; }
+			g_mode[index]   = 1;
+			g_woz[index]    = buf;
+			g_woz_sz[index] = n;
+			g_wb_ok[index]  = 0;            // read-only: cannot write back into a zip
+			f->size = (int64_t)n;
+			*out_writable = 0;
+			printf("IIgs: native WOZ from archive on slot %d -> RAM (%zu bytes), read-only\n", index, n);
+			return IIGS_HANDLED;
+		}
+
+		return IIGS_PASSTHRU;   // native WOZ on a real file: serve directly
 	}
 
 	// Need to convert. Validate geometry up front for a clear message.
