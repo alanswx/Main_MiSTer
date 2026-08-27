@@ -1127,7 +1127,18 @@ static void send_rtc(int type)
 
 	if (type & 2)
 	{
-		t += t - mktime(gmtime(&t));
+		// Mac cores: resolve DST for the date so the guest RTC shows true local time.
+		if (is_mac_scsi_family())
+		{
+			struct tm tm_utc;
+			gmtime_r(&t, &tm_utc);
+			tm_utc.tm_isdst = -1;   // let mktime resolve DST for this date
+			t += t - mktime(&tm_utc);
+		}
+		else
+		{
+			t += t - mktime(gmtime(&t));
+		}
 
 		spi_uio_cmd_cont(UIO_TIMESTAMP);
 		spi_w(t);
