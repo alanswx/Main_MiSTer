@@ -101,7 +101,7 @@ void mac_poll()
 	// the repulse. Gate it on the drive's own slot.
 	if (mac_cdrom_slot() >= 0) mac_cdrom_poll();
 
-	// PDS Ethernet: mac_eth self-gates on an exact core-name match (MacLCII must not reach it).
+	// Ethernet: mac_eth self-gates on exact core-name matches (MacLCII must not reach it).
 	mac_eth_poll();
 }
 

@@ -79,14 +79,9 @@ static uint16_t isr_seen;   // ack-clearable ISR bits; see sonic_fill_shadows
 // Redelivery window: a guest ISR ack crosses the doorbell ~1-2 ms after the shadow read it answers.
 #define ISR_REDELIVER_US 20000
 
-// Per-BIT isr_seen lets that late ack erase a PUSHED PKTRX/TXDN re-fire with work unconsumed;
 static uint64_t model_us = 1000;   // guard clock (sonic_time_tick); starts past the 0 sentinel
-
-// at a TCP window tail nothing re-sets the bit: the guest parks until sender RTO / deadman.
 static uint64_t pktrx_last_us, txdn_last_us;   // last-event stamps (0 = consumed or never fired)
-
-// The guard re-asserts such an edge once per event; the counters witness each rescue.
-static uint32_t redeliver_rx, redeliver_tx;
+static uint32_t redeliver_rx, redeliver_tx;    // rescues, witnessed as 'redeliver rx/tx'
 
 // Mask at the bus only, never in register arithmetic: the slot has fewer address lines.
 static uint32_t ea_stripped_cnt;
