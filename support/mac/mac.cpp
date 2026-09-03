@@ -21,7 +21,8 @@ static char is_core_named(const char *n)
 char is_mac_scsi_family()
 {
 	return is_core_named("maclc") || is_core_named("lbmactwo") || is_core_named("maciivi")
-	    || is_core_named("macplus");
+	    || is_core_named("macplus")
+	    || is_core_named("macquadra800");
 }
 
 #define MAC_TOOLBOX_SLOT    3   // MacLC.sv VD_TOOLBOX
