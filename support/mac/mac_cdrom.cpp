@@ -446,10 +446,7 @@ static int audio_frame(uint32_t disc_lba)
 void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 {
 	memset(buf, 0, sz);
-	if (index != mac_cdrom_slot() || !cd.active || (sz != 512 && sz != 2352)) return;
-
-	// data-window reads = the guest genuinely reading (boot-repulse skip signal)
-	if (lba < MAC_CDROM_AUDIO_BLK) rp_data_reads++;
+	if (index != mac_cdrom_slot() || !cd.active) return;
 
 	// whole-frame CD-DA (user_io sets sz=2352): lba = MAC_CDROM_AUDIO_BLK + disc_lba
 	if (sz == 2352)
@@ -460,9 +457,17 @@ void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 		return;
 	}
 
+	// Everything else is 512-byte blocks: one, or an aligned run of up to
+	// eight (the core's SCSI block cache fetches the data window in 4 KB
+	// groups, sd_blk_cnt = 7, since 2026-09-08). The TOC blob and raw-audio
+	// windows keep their single-block contract; the core issues those one
+	// block at a time.
+	if (sz < 512 || (sz & 511) || sz > 4096) return;
+
 	// TOC blob window
 	if (lba >= MAC_CDROM_TOC_BLK && lba < MAC_CDROM_TOC_BLK + MAC_CDROM_TOC_BLKS)
 	{
+		if (sz != 512) return;
 		memcpy(buf, cd.tocblob + (lba - MAC_CDROM_TOC_BLK) * 512, 512);
 		return;
 	}
@@ -470,6 +475,7 @@ void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 	// raw audio window: 5 blocks per disc sector (2352 bytes + 208 pad)
 	if (lba >= MAC_CDROM_AUDIO_BLK && lba < MAC_CDROM_TOC_BLK)
 	{
+		if (sz != 512) return;
 		uint64_t rel  = lba - MAC_CDROM_AUDIO_BLK;
 		uint32_t dlba = (uint32_t)(rel / 5);
 		uint32_t part = (uint32_t)(rel % 5);
@@ -479,29 +485,38 @@ void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 		return;
 	}
 
-	// data window: de-headered 2048-byte sectors of the data track
-	uint64_t byte_pos = lba * 512ULL;
-	uint64_t cd_lba   = byte_pos >> 11;
-	uint32_t off      = byte_pos & 2047;   // 512-blocks never straddle a sector
-
-	if (cd_lba >= cd.sectors) return;      // past leadout: zeros
-
-	// Audio-only disc: no data track exists, so there is nothing to serve
-	if (cd.trk < 0) return;
-
-	cd_track_t *k = &cd.toc.tracks[cd.trk];
-	if (cd.is_chd)
+	// data window: de-headered 2048-byte sectors of the data track, served
+	// one 512-byte block at a time (a block never straddles a sector); a
+	// multi-block request is the same loop over consecutive blocks. Blocks
+	// past the lead-out, or on an audio-only disc, stay zero.
+	for (int pos = 0; pos < sz; pos += 512, lba++)
 	{
-		int chd_lba = (int)cd_lba + k->start + k->offset;
-		if (mister_chd_read_sector(cd.toc.chd_f, chd_lba, 0, cd.data_soff + off,
-		                           sz, buf, cd.hunkbuf, &cd.hunknum) != CHDERR_NONE)
-			memset(buf, 0, sz);
-	}
-	else
-	{
-		diskled_on();
-		uint64_t src_frame = (uint64_t)((int)cd_lba + k->start + k->offset);
-		if (FileSeek(&k->f, src_frame * k->sector_size + cd.data_soff + off, SEEK_SET))
-			FileReadAdv(&k->f, buf, sz);
+		// data-window reads = the guest genuinely reading (boot-repulse skip
+		// signal); counted per block so the threshold keeps its meaning
+		if (lba < MAC_CDROM_AUDIO_BLK) rp_data_reads++;
+		else break;                          // a run never crosses into the windows
+
+		uint64_t byte_pos = lba * 512ULL;
+		uint64_t cd_lba   = byte_pos >> 11;
+		uint32_t off      = byte_pos & 2047;
+
+		if (cd_lba >= cd.sectors) break;     // past leadout: zeros
+		if (cd.trk < 0) break;               // audio-only disc: nothing to serve
+
+		cd_track_t *k = &cd.toc.tracks[cd.trk];
+		if (cd.is_chd)
+		{
+			int chd_lba = (int)cd_lba + k->start + k->offset;
+			if (mister_chd_read_sector(cd.toc.chd_f, chd_lba, 0, cd.data_soff + off,
+			                           512, buf + pos, cd.hunkbuf, &cd.hunknum) != CHDERR_NONE)
+				memset(buf + pos, 0, 512);
+		}
+		else
+		{
+			diskled_on();
+			uint64_t src_frame = (uint64_t)((int)cd_lba + k->start + k->offset);
+			if (FileSeek(&k->f, src_frame * k->sector_size + cd.data_soff + off, SEEK_SET))
+				FileReadAdv(&k->f, buf + pos, 512);
+		}
 	}
 }
