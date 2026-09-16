@@ -35,6 +35,7 @@
 #define MAC_CDROM_CMD_BLK    0x7D000000u
 #define MAC_CDROM_RESP_BLK   0x7E000000u
 #define MAC_CDROM_WIN_BASE   MAC_CDROM_FRAME_BLK   // lowest window LBA; the CD-DA window ends here
+#define MAC_CDROM_CMD_CDB    496                   // byte offset of the CDB in a command block
 
 enum
 {
