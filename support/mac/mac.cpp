@@ -25,6 +25,14 @@ char is_mac_scsi_family()
 	    || is_core_named("macquadra800");
 }
 
+// The cores that read the CD slot's response / next-frame windows and write
+// its command block (mac_cdrom.h). Add a core here only together with the
+// RTL that speaks the contract; nothing else in the family changes.
+char is_mac_scsi_optimized()
+{
+	return is_core_named("macquadra800");
+}
+
 #define MAC_TOOLBOX_SLOT    3   // MacLC.sv VD_TOOLBOX
 #define MAC_CD_TOOLBOX_SLOT 5   // MacLC.sv VD_CD_TOOLBOX
 
@@ -108,8 +116,10 @@ void mac_poll()
 
 int mac_cdda_window(int disk, uint32_t lba)
 {
+	// The optimized cores' windows start at MAC_CDROM_WIN_BASE and are 512-byte
+	// blocks; no real disc reaches them (2352-byte frames sit at 5 x lba).
 	return disk == MAC_CDROM_SLOT && is_mac_scsi_family() &&
-	       lba >= MAC_CDROM_AUDIO_BLK && lba < MAC_CDROM_TOC_BLK;
+	       lba >= MAC_CDROM_AUDIO_BLK && lba < MAC_CDROM_WIN_BASE;
 }
 
 int mac_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
@@ -142,8 +152,35 @@ int mac_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
 		return 1;
 	}
 
+	// Optimized cores: the CD slot's response / next-frame windows (reads) and
+	// its command block (the one write the slot takes), live with or without
+	// a disc so INQUIRY, MODE SENSE and MODE SELECT work on an empty drive.
+	if (disk == mac_cdrom_slot() && is_mac_scsi_optimized() &&
+	    lba >= MAC_CDROM_WIN_BASE && lba < MAC_CDROM_TOC_BLK)
+	{
+		if (op == 2)
+		{
+			EnableIO();
+			spi_w(UIO_SECTOR_WR | ack);
+			spi_block_read(buf, user_io_get_width(), sz);
+			DisableIO();
+			mac_cdrom_command(lba, buf, sz);
+		}
+		else if (op & 1)
+		{
+			mac_cdrom_window_fill(lba, buf, sz);
+			EnableIO();
+			spi_w(UIO_SECTOR_RD | ack);
+			spi_block_write(buf, user_io_get_width(), sz);
+			DisableIO();
+		}
+		else return -1;
+		return 1;
+	}
+
 	// CD slot with translation active: read-only views of the virtual disc
-	// (the core ties sd_wr off). Flat images stay on the generic path.
+	// (the core ties sd_wr off). Flat images stay on the generic path, except
+	// for the optimized cores, which mount everything through here.
 	if (mac_cdrom_active(disk))
 	{
 		if (op & 1)

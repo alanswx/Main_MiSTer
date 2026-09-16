@@ -12,6 +12,15 @@
 // Cores sharing the MacLC scsi.v target and its HPS features.
 char is_mac_scsi_family();
 
+// Cores whose CD-ROM target has its responses and playhead built here
+// (MacQuadra800 from its optimize-SCSI work, 2026-09): they read the CD
+// slot's response / next-frame windows and write its command block
+// (mac_cdrom.h), and every CD image is served through mac_cdrom_fill so
+// the windows are always live. Everything gated on this is invisible to
+// the rest of the family and to older bitstreams of the same core, which
+// never address those LBAs.
+char is_mac_scsi_optimized();
+
 // hps_io slots; -1 = the core lacks the device. One shared family layout
 // (LBMacTwo: none). A wrong slot corrupts another device's sector stream.
 int mac_toolbox_slot();
