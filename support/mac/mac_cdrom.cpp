@@ -392,9 +392,13 @@ int mac_cdrom_mount(int index, const char *name)
 	else mac_cdrom_unmount(index);
 
 	// Arm the boot repulse for HANDLED mounts; its own remount must not re-arm.
+	// Not for the optimized cores: the MacQuadra800 core replays every mount
+	// pulse to the machine after reset itself, so the early attach is never
+	// missed, and a re-insert landing mid-boot wedged the Mac OS 8.1 boot as
+	// the Apple CD-ROM extension loaded (A/B on the box, 2026-09-16).
 	if (!rp_firing)
 	{
-		if (r == MAC_CDROM_HANDLED && name && *name)
+		if (r == MAC_CDROM_HANDLED && name && *name && !is_mac_scsi_optimized())
 		{
 			strncpy(rp_path, name, sizeof(rp_path) - 1);
 			rp_path[sizeof(rp_path) - 1] = 0;
