@@ -22,9 +22,10 @@
 //               op $12 INQUIRY; $1A a = page; $43 a = cdb[9], b = cdb[6];
 //               $C1 a = cdb[9], b = cdb[5]; $42 a = cdb[3], b = cdb[6];
 //               $C2; $CC a = cdb[3]
-//   command:    write 1 block  at CMD_BLK + (op << 16): bytes 0..11 the CDB,
-//               16.. the parameter list; pseudo-ops $FF machine reset,
-//               $FE SCSI bus reset
+//   command:    write 1 block  at CMD_BLK + (op << 16): the DATA OUT
+//               parameter list (MODE SELECT, AUDIO CONTROL) at bytes 0..
+//               where the core's drain put it, the 12-byte CDB at bytes
+//               496..507; pseudo-ops $FF machine reset, $FE SCSI bus reset
 //   next frame: read  5 blocks at FRAME_BLK: 2352 bytes of volume-scaled PCM
 //               (16-bit LE stereo), then [2352] audio status (0 play, 1
 //               paused, 3 end, 5 idle), [2353] 1 = a frame is present,
