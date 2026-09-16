@@ -615,17 +615,18 @@ void mac_cdrom_command(uint32_t lba, const uint8_t *buf, int sz)
 	if (sz < 512) return;
 	mac_cd_play *p = P();
 	uint8_t op = (uint8_t)(lba >> 16);
+	const uint8_t *cdb = buf + MAC_CDROM_CMD_CDB;   // the list, if any, is at buf[0..]
 	switch (op)
 	{
 	case 0xFF: mac_cd_play_init(p); break;                 // machine reset
 	case 0xFE: mac_cd_play_stop(p); break;                 // SCSI bus reset
 	case 0x1B: case 0xC0: mac_cd_play_stop(p); break;      // eject: the core owns the media state
-	case 0x15: mac_cd_play_command(p, buf, buf + 16, buf[4]); break;   // MODE SELECT + its list
+	case 0x15: mac_cd_play_command(p, cdb, buf, cdb[4]); break;   // MODE SELECT + its list
 	case 0x1E: case 0xBB: case 0xCE: break;                // PREVENT / SET CD SPEED / AUDIO CONTROL
 	default:                                               // the audio transport set
-		mac_cd_play_command(p, buf, NULL, 0);
+		mac_cd_play_command(p, cdb, NULL, 0);
 		printf("Mac CD: cmd %02X %02X %02X%02X%02X%02X %02X%02X%02X%02X -> st %d cur %u stop %u\n",
-		       buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
+		       cdb[0], cdb[1], cdb[2], cdb[3], cdb[4], cdb[5], cdb[6], cdb[7], cdb[8], cdb[9],
 		       p->state, p->cur, p->stop);
 		break;
 	}
