@@ -10,6 +10,8 @@
 #include "../../hardware.h"
 #include "../chd/mister_chd.h"
 #include "mac.h"
+#include "mac_cdrom_resp.h"
+#include "mac_cdrom_play.h"
 
 struct mac_cdrom_state
 {
@@ -17,6 +19,7 @@ struct mac_cdrom_state
 	int      is_chd;
 
 	toc_t    toc;          // full track table, disc-LBA space (no +150)
+	mac_cd_toc mtoc;       // the same, in the response builders' shape
 	uint8_t *hunkbuf;      // chd hunk cache
 	int      hunknum;
 
@@ -33,6 +36,18 @@ struct mac_cdrom_state
 };
 
 static mac_cdrom_state cd = {};
+
+// The optimized cores' playhead and MODE SELECT state: outlives the disc
+// (the drive keeps its volume ports across an eject, like the RTL's).
+static mac_cd_play play;
+static int         play_inited;
+static uint32_t    last_sectors;   // the RTL's tgt_blocks: MODE SENSE capacity after an eject
+
+static mac_cd_play *P(void)
+{
+	if (!play_inited) { mac_cd_play_init(&play); play_inited = 1; }
+	return &play;
+}
 
 static char     rp_path[1024];
 static uint32_t rp_timer;
@@ -56,6 +71,7 @@ void mac_cdrom_unmount(int index)
 	if (cd.hunkbuf) free(cd.hunkbuf);
 	memset(&cd, 0, sizeof(cd));
 	cd.aframe_lba = -1;
+	mac_cd_play_set_toc(P(), NULL);
 }
 
 uint64_t mac_cdrom_size(int index)
@@ -71,28 +87,28 @@ int mac_cdrom_active(int index)
 
 // ---- TOC blob ------------------
 
+// The track table in the response builders' shape, then the MCDA blob from
+// it. Version 2 (the has-data flag at byte 12) only for the optimized cores;
+// everyone else keeps the byte-identical version-1 blob.
 static void build_toc_blob(void)
 {
-	uint8_t *b = cd.tocblob;
-	memset(b, 0, sizeof(cd.tocblob));
-	memcpy(b, "MCDA", 4);
-	b[4] = 1;                                  // version
-	b[5] = 1;                                  // first track
-	b[6] = (uint8_t)cd.toc.last;               // last track
-	b[7] = (uint8_t)(cd.trk + 1);              // data track number (1-based)
-	uint32_t leadout = (uint32_t)cd.toc.end;
-	b[8]  = (uint8_t)leadout;       b[9]  = (uint8_t)(leadout >> 8);
-	b[10] = (uint8_t)(leadout >> 16); b[11] = (uint8_t)(leadout >> 24);
-	for (int i = 0; i < cd.toc.last && i < 99; i++)
+	mac_cd_toc *t = &cd.mtoc;
+	memset(t, 0, sizeof(*t));
+	t->n = (cd.toc.last > MAC_CD_MAX_TRACKS) ? MAC_CD_MAX_TRACKS : cd.toc.last;
+	for (int i = 0; i < t->n; i++)
 	{
-		uint8_t *e = b + 16 + 8 * i;
-		e[0] = (cd.toc.tracks[i].type == TT_CDDA) ? 0x10 : 0x14;  // ctrl/adr
-		uint32_t s = (uint32_t)cd.toc.tracks[i].start;
-		e[2] = (uint8_t)s; e[3] = (uint8_t)(s >> 8);
-		e[4] = (uint8_t)(s >> 16); e[5] = (uint8_t)(s >> 24);
-		uint32_t pg = (uint32_t)cd.toc.tracks[i].pregap;
-		if (pg > 0xffff) pg = 0xffff;
-		e[6] = (uint8_t)pg; e[7] = (uint8_t)(pg >> 8);
+		t->ctrl[i]   = (cd.toc.tracks[i].type == TT_CDDA) ? 0x10 : 0x14;  // ctrl/adr
+		t->start[i]  = (uint32_t)cd.toc.tracks[i].start;
+		t->pregap[i] = (uint32_t)cd.toc.tracks[i].pregap;
+	}
+	t->leadout  = (uint32_t)cd.toc.end;
+	t->data_trk = cd.trk;
+
+	mac_cd_build_blob(t, cd.tocblob);
+	if (!is_mac_scsi_optimized())
+	{
+		cd.tocblob[4]  = 1;
+		cd.tocblob[12] = 0;
 	}
 }
 
@@ -127,6 +143,8 @@ static int finish_mount(const char *src)
 	}
 	cd.aframe_lba = -1;
 	build_toc_blob();
+	last_sectors = (uint32_t)cd.sectors;
+	mac_cd_play_set_toc(P(), &cd.mtoc);
 	log_toc(src);
 	return MAC_CDROM_HANDLED;
 }
@@ -335,9 +353,12 @@ static int mount_raw(const char *name)
 		if (!memcmp(hdr, sync, sizeof(sync))) found = 1;
 	}
 
-	if (found <= 0)
+	if (found < 0) found = 0;                // no PVD, no sync pattern: flat 2048
+	if (found == 0 && !is_mac_scsi_optimized())
 	{
-		// flat 2048: the generic sd_image path serves it byte-for-byte
+		// flat 2048: the generic sd_image path serves it byte-for-byte. The
+		// optimized cores take it through here instead, so the TOC blob and
+		// the response windows are live for every image.
 		FileClose(&k->f);
 		return MAC_CDROM_PASSTHRU;
 	}
@@ -473,7 +494,7 @@ void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 	}
 
 	// raw audio window: 5 blocks per disc sector (2352 bytes + 208 pad)
-	if (lba >= MAC_CDROM_AUDIO_BLK && lba < MAC_CDROM_TOC_BLK)
+	if (lba >= MAC_CDROM_AUDIO_BLK && lba < MAC_CDROM_WIN_BASE)
 	{
 		if (sz != 512) return;
 		uint64_t rel  = lba - MAC_CDROM_AUDIO_BLK;
@@ -489,6 +510,28 @@ void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 	// one 512-byte block at a time (a block never straddles a sector); a
 	// multi-block request is the same loop over consecutive blocks. Blocks
 	// past the lead-out, or on an audio-only disc, stay zero.
+	if (is_mac_scsi_optimized())
+	{
+		// a data READ stops playback (the oracle rule cd_audio.sv applies on
+		// read_stb; the optimized core's data reads all come through here)
+		if (lba < MAC_CDROM_AUDIO_BLK) mac_cd_play_stop(P());
+
+		// a flat 2048-byte file is contiguous user data: one read per run
+		if (lba < MAC_CDROM_AUDIO_BLK && !cd.is_chd && cd.trk >= 0 &&
+		    cd.toc.tracks[cd.trk].sector_size == 2048 && cd.data_soff == 0)
+		{
+			cd_track_t *k = &cd.toc.tracks[cd.trk];
+			uint64_t byte_pos = lba * 512ULL;
+			uint64_t end      = cd.sectors * 2048ULL;
+			if (byte_pos >= end) return;
+			int n = (end - byte_pos < (uint64_t)sz) ? (int)(end - byte_pos) : sz;
+			rp_data_reads += (uint32_t)(sz / 512);
+			diskled_on();
+			uint64_t src = (uint64_t)(k->start + k->offset) * 2048ULL + byte_pos;
+			if (FileSeek(&k->f, src, SEEK_SET)) FileReadAdv(&k->f, buf, n);
+			return;
+		}
+	}
 	for (int pos = 0; pos < sz; pos += 512, lba++)
 	{
 		// data-window reads = the guest genuinely reading (boot-repulse skip
@@ -518,5 +561,72 @@ void mac_cdrom_fill(int index, uint64_t lba, uint8_t *buf, int sz)
 			if (FileSeek(&k->f, src_frame * k->sector_size + cd.data_soff + off, SEEK_SET))
 				FileReadAdv(&k->f, buf + pos, 512);
 		}
+	}
+}
+
+// ---- optimized-core windows (mac_cdrom.h) -----------------------------------
+
+void mac_cdrom_window_fill(uint32_t lba, uint8_t *buf, int sz)
+{
+	memset(buf, 0, sz);
+	mac_cd_play *p = P();
+
+	// response window: the DATA IN of one CD command, built for its CDB fields
+	if (lba >= MAC_CDROM_RESP_BLK && lba < MAC_CDROM_RESP_BLK + 0x01000000u)
+	{
+		if (sz < 512) return;
+		uint8_t op = (uint8_t)(lba >> 16), a = (uint8_t)(lba >> 8), b = (uint8_t)lba;
+		const mac_cd_toc *t = cd.active ? &cd.mtoc : NULL;
+		mac_cd_pos pos;
+		switch (op)
+		{
+		case 0x12: mac_cd_resp_inquiry(buf); break;
+		case 0x1A: mac_cd_resp_mode_sense(a & 0x3F, last_sectors - 1, p->ports, buf); break;
+		case 0x43: if (t) mac_cd_resp_toc_43(t, a, b, buf); break;
+		case 0xC1: if (t) mac_cd_resp_toc_c1(t, a, b, buf); break;
+		case 0x42: mac_cd_play_pos(p, &pos); mac_cd_resp_subch(&pos, a, b, buf); break;
+		case 0xC2: mac_cd_play_pos(p, &pos); mac_cd_resp_subq(&pos, buf); break;
+		case 0xCC: mac_cd_play_pos(p, &pos); mac_cd_resp_astat(&pos, a, buf); break;
+		default: break;
+		}
+		return;
+	}
+
+	// next frame: the frame at the playhead, scaled, and the state in the pad
+	if (lba == MAC_CDROM_FRAME_BLK)
+	{
+		if (sz < 2358) return;
+		uint32_t flba = 0;
+		int have = mac_cd_play_frame(p, &flba);
+		if (have && cd.active && audio_frame(flba))
+		{
+			memcpy(buf, cd.aframe, 2352);
+			mac_cd_play_scale(p, (int16_t *)buf, 588);
+		}
+		buf[2352] = mac_cd_play_ast(p);
+		buf[2353] = (uint8_t)have;
+		buf[2354] = (uint8_t)p->flush_gen;         buf[2355] = (uint8_t)(p->flush_gen >> 8);
+		buf[2356] = (uint8_t)(p->flush_gen >> 16); buf[2357] = (uint8_t)(p->flush_gen >> 24);
+	}
+}
+
+void mac_cdrom_command(uint32_t lba, const uint8_t *buf, int sz)
+{
+	if (sz < 512) return;
+	mac_cd_play *p = P();
+	uint8_t op = (uint8_t)(lba >> 16);
+	switch (op)
+	{
+	case 0xFF: mac_cd_play_init(p); break;                 // machine reset
+	case 0xFE: mac_cd_play_stop(p); break;                 // SCSI bus reset
+	case 0x1B: case 0xC0: mac_cd_play_stop(p); break;      // eject: the core owns the media state
+	case 0x15: mac_cd_play_command(p, buf, buf + 16, buf[4]); break;   // MODE SELECT + its list
+	case 0x1E: case 0xBB: case 0xCE: break;                // PREVENT / SET CD SPEED / AUDIO CONTROL
+	default:                                               // the audio transport set
+		mac_cd_play_command(p, buf, NULL, 0);
+		printf("Mac CD: cmd %02X %02X %02X%02X%02X%02X %02X%02X%02X%02X -> st %d cur %u stop %u\n",
+		       buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
+		       p->state, p->cur, p->stop);
+		break;
 	}
 }
