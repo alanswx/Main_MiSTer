@@ -185,6 +185,19 @@ static void test_rx(void)
 	for (int i = last_w + 1; i < nbeat; i++) CHECK(0, "a read follows the publish at %X", beat[i].a);
 	CHECK(sonic_take_raised() == 0x0400, "PKTRX raised");
 
+	// 32-bit mode keeps the buffer pointer longword-aligned: a 101-byte frame (105 with its FCS)
+	// is padded to 108 with $FF, and the next frame starts there
+	uint8_t odd[101];
+	memset(odd, 0x3C, sizeof odd); memcpy(odd, me, 6);
+	q8_begin(); CHECK(sonic_rx_frame(odd, sizeof odd) == 1, "odd-length frame delivered"); q8_flush();
+	q8_begin(); CHECK(sonic_rx_frame(f, sizeof f) == 1, "frame after it delivered"); q8_flush();
+	uint32_t d1 = RDA + 28, d2 = RDA + 56;
+	CHECK(rl(d1 + 4) == 105, "byte count is the real length (%u)", rl(d1 + 4));
+	CHECK(rl(d1 + 8) == ((RBA + 104) & 0xffff), "second frame starts after the first (%X)", rl(d1 + 8));
+	CHECK(ram[RBA + 104 + 105] == 0xff && ram[RBA + 104 + 107] == 0xff, "padding is $FF");
+	CHECK(rl(d2 + 8) == ((RBA + 104 + 108) & 0xffff), "third frame is longword-aligned (%X)", rl(d2 + 8));
+	sonic_take_raised();
+
 	uint8_t other[64] = { 0x02, 1, 2, 3, 4, 5 };
 	rpcs = 0;
 	q8_begin();

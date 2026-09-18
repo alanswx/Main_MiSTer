@@ -285,6 +285,12 @@ int sonic_rx_frame(const uint8_t *frame, int len)
 	buf[len + 2] = (uint8_t)(fcs >> 16);
 	buf[len + 3] = (uint8_t)(fcs >> 24);
 	int length = len + 4;
+	// In 32-bit mode the chip moves longwords, so the buffer pointer stays longword-aligned: the
+	// frame is padded with $FF and the padding counts against the buffer (datasheet; QEMU
+	// dp8393x_receive). The Quadra's "Sonic 32" driver relies on it: with frames packed at odd
+	// addresses it never saw its DHCP offer. The 16-bit LC path keeps its byte-exact packing.
+	int padded = (reg[DCR] & DCR_DW) ? ((length + 3) & ~3) : length;
+	for (int i = length; i < padded; i++) buf[i] = 0xff;
 
 	if (length < 64 && !(reg[RCR] & RCR_RNT)) return 0;
 	reg[RCR] |= RCR_PRX;
@@ -298,13 +304,13 @@ int sonic_rx_frame(const uint8_t *frame, int len)
 
 	// Store the packet first (write order is driver-visible); advance CRBA from the raw 32 bits.
 	uint32_t const rba_reg = ((uint32_t)reg[CRBA1] << 16) | reg[CRBA0];
-	if (host->write_bytes(EA(reg[CRBA1], reg[CRBA0]), buf, length)) return 0;
+	if (host->write_bytes(EA(reg[CRBA1], reg[CRBA0]), buf, padded)) return 0;
 
-	uint32_t const crba = rba_reg + length;
+	uint32_t const crba = rba_reg + padded;
 	reg[CRBA1] = (uint16_t)(crba >> 16);
 	reg[CRBA0] = (uint16_t)crba;
 
-	uint32_t const rbwc = (((uint32_t)reg[RBWC1] << 16) | reg[RBWC0]) - (length + 1) / 2;
+	uint32_t const rbwc = (((uint32_t)reg[RBWC1] << 16) | reg[RBWC0]) - (padded + 1) / 2;
 	reg[RBWC1] = (uint16_t)(rbwc >> 16);
 	reg[RBWC0] = (uint16_t)rbwc;
 	if (rbwc < reg[EOBC]) reg[RCR] |= RCR_LPKT;
