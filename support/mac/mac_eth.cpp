@@ -349,9 +349,21 @@ static void trace_entry(uint64_t e, uint16_t applied)
 	trace_n++;
 }
 
+// /tmp/mac_eth_dbg holds a hex flag word, re-read every second:
+//   1 = drop every guest-RAM write   2 = refuse every received frame
+static unsigned dbg_flags;
+
 // Once a second: flush the capture, rewrite the trace if it moved, serve a dump request.
 static void instruments_tick(void)
 {
+	{
+		unsigned fl = 0;
+		FILE *df = fopen("/tmp/mac_eth_dbg", "r");
+		if (df) { if (fscanf(df, "%x", &fl) != 1) fl = 0; fclose(df); }
+		if (fl != dbg_flags) printf("mac_eth: debug flags %X\n", fl);
+		dbg_flags = fl;
+		q8_drop_writes(fl & 1);
+	}
 	if (pcap) fflush(pcap);
 	if (trace_n != trace_dumped)
 	{
@@ -920,6 +932,7 @@ void mac_eth_poll(void)
 				else if (et == 0x0800) st.rx_ip++;
 			}
 		}
+		if (dbg_flags & 2) { st.rx_refused++; continue; }
 		// Order matters: while held frames exist a new unicast queues behind them.
 		if (unicast_ours && rxq_count) { rxq_push(frame, n); continue; }
 		model_enter();

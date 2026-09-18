@@ -25,6 +25,9 @@ int  q8_write_words(uint32_t ga, const uint16_t *w, int n, int stride);
 int  q8_read_bytes(uint32_t ga, uint8_t *b, int n);
 int  q8_write_bytes(uint32_t ga, const uint8_t *b, int n);
 
+// Bring-up switch: 1 = guest-RAM writes are accepted and thrown away (reads still run).
+void q8_drop_writes(int on);
+
 // Land every deferred write. Call before anything that tells the guest to look (shadows, ISR bits).
 int  q8_flush(void);
 // Forget the descriptor read-ahead: the guest may have rewritten RAM since.

@@ -112,9 +112,13 @@ static int enqueue(uint32_t ga, uint32_t len, int wr, const uint8_t *src, uint8_
 	return 0;
 }
 
+static int drop_writes;
+void q8_drop_writes(int on) { drop_writes = on; }
+
 static int wr(uint32_t ga, const uint8_t *src, uint32_t len)
 {
 	if (bad(ga, len)) return -1;
+	if (drop_writes) return 0;
 	ahead_len = 0;
 	return enqueue(ga, len, 1, src, 0);
 }
