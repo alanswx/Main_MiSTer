@@ -834,6 +834,12 @@ void mac_eth_poll(void)
 				        (unsigned long long)(q8_stats.rpc ? q8_stats.rpc_us / q8_stats.rpc : 0),
 				        (unsigned long long)q8_stats.rpc_us_max, (unsigned long long)q8_stats.rpc_slept,
 				        (unsigned long long)q8_stats.rpc_fail);
+				{
+					// the FPGA's own copy: what the guest reads, and the line it is interrupted by
+					uint32_t d = (uint32_t)*ctl(ETH_Q8_DEBUG);
+					fprintf(f, "q8 fpga    isr=%04X imr=%04X present=%u irq=%u  (model isr=%04X)\n",
+					        d & 0x7fff, (d >> 15) & 0x7fff, (d >> 30) & 1, d >> 31, sonic_reg(SONIC_ISR));
+				}
 				fprintf(f, "q8 ahead   %llu  bad_addr %llu\n",
 				        (unsigned long long)q8_stats.ahead_hit, (unsigned long long)q8_stats.bad_addr);
 				fprintf(f, "q8 isr     posts %llu  acks_kept %llu  seq %u  ack %u  unposted %04X\n",
