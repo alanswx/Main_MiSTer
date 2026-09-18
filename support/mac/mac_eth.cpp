@@ -291,8 +291,93 @@ static int gw_write_words(uint32_t ga, const uint16_t *v, int n, int stride)
 
 static int gb_read(uint32_t ga, uint8_t *b, int n)  { return rpc_read(ga, b, (uint32_t)n); }
 static int gb_write(uint32_t ga, const uint8_t *b, int n) { return rpc_write(ga, b, (uint32_t)n); }
+// ---- bring-up instruments (Quadra 800): what the counters cannot say ----------------------------
+// /tmp/mac_eth.pcap     every frame sent and every frame the model delivered, first 8 MB
+// /tmp/mac_eth_regtrace the last 512 doorbell entries, oldest first, microsecond stamps
+// /tmp/mac_eth_dumpreq  write "hexaddr hexlen" there; the guest RAM lands in /tmp/mac_eth_dump.bin
+#define PCAP_MAX   (8u << 20)
+#define TRACE_LEN  512
+static FILE    *pcap;
+static uint32_t pcap_bytes;
+static struct { uint64_t t; uint64_t e; uint16_t applied; } trace[TRACE_LEN];
+static uint32_t trace_n, trace_dumped;
+
+static void pcap_open(void)
+{
+	if (pcap) fclose(pcap);
+	pcap = fopen("/tmp/mac_eth.pcap", "wb");
+	pcap_bytes = 0;
+	if (!pcap) return;
+	const uint32_t hdr[6] = { 0xa1b2c3d4, 0x00040002, 0, 0, 65535, 1 };   // LINKTYPE_ETHERNET
+	fwrite(hdr, sizeof hdr, 1, pcap);
+}
+
+static void pcap_frame(const uint8_t *f, int n)
+{
+	if (!pcap || n <= 0 || pcap_bytes > PCAP_MAX) return;
+	uint64_t t = now_us();
+	const uint32_t rec[4] = { (uint32_t)(t / 1000000), (uint32_t)(t % 1000000), (uint32_t)n, (uint32_t)n };
+	fwrite(rec, sizeof rec, 1, pcap);
+	fwrite(f, 1, (size_t)n, pcap);
+	pcap_bytes += (uint32_t)n + 16;
+}
+
+static void trace_entry(uint64_t e, uint16_t applied)
+{
+	trace[trace_n % TRACE_LEN].t = now_us();
+	trace[trace_n % TRACE_LEN].e = e;
+	trace[trace_n % TRACE_LEN].applied = applied;
+	trace_n++;
+}
+
+// Once a second: flush the capture, rewrite the trace if it moved, serve a dump request.
+static void instruments_tick(void)
+{
+	if (pcap) fflush(pcap);
+	if (trace_n != trace_dumped)
+	{
+		FILE *f = fopen("/tmp/mac_eth_regtrace", "w");
+		if (f)
+		{
+			uint32_t first = trace_n > TRACE_LEN ? trace_n - TRACE_LEN : 0;
+			for (uint32_t i = first; i < trace_n; i++)
+			{
+				uint64_t e = trace[i % TRACE_LEN].e;
+				fprintf(f, "%10llu.%06llu #%u %s reg %02X data %04X applied %04X seen %04X\n",
+				        (unsigned long long)(trace[i % TRACE_LEN].t / 1000000),
+				        (unsigned long long)(trace[i % TRACE_LEN].t % 1000000), i,
+				        ((e >> 1) & 7) ? "RESET" : "write", (unsigned)(e >> 4) & 0x3f,
+				        (unsigned)(e >> 16) & 0xffff, trace[i % TRACE_LEN].applied, (unsigned)(e >> 32) & 0xffff);
+			}
+			fclose(f);
+		}
+		trace_dumped = trace_n;
+	}
+	FILE *rq = fopen("/tmp/mac_eth_dumpreq", "r");
+	if (!rq) return;
+	unsigned addr = 0, len = 0;
+	int ok = fscanf(rq, "%x %x", &addr, &len) == 2;
+	fclose(rq);
+	remove("/tmp/mac_eth_dumpreq");
+	if (!ok || !len || len > (1u << 20)) return;
+	FILE *out = fopen("/tmp/mac_eth_dump.bin", "wb");
+	if (!out) return;
+	static uint8_t chunk[4096];
+	q8_flush();
+	for (unsigned done = 0; done < len; )
+	{
+		unsigned n = len - done > sizeof chunk ? sizeof chunk : len - done;
+		if (q8_read_bytes(addr + done, chunk, (int)n)) break;
+		fwrite(chunk, 1, n, out);
+		done += n;
+	}
+	fclose(out);
+	printf("mac_eth: dumped guest %08X+%X\n", addr, len);
+}
+
 static int wire_send(const uint8_t *f, int n)
 {
+	if (card_kind == CARD_Q8) pcap_frame(f, n);
 	st.tx_frames++; st.tx_bytes += n;
 	if (n >= 14)
 	{
@@ -525,10 +610,12 @@ static void drain_ring(void)
 	while (stash_count && budget--)
 	{
 		uint64_t e = ring_stash[stash_head];
-		q8_aptr = ring_stash_idx[stash_head] + 1;
+		// The applied index moves only once the entry IS applied and pushed: a DMA wait inside the
+		// apply republishes the pointers (ring_slurp), and the FPGA drops its CR overlay on them.
+		uint32_t applied_idx = ring_stash_idx[stash_head] + 1;
 		stash_head = (stash_head + 1) % STASH_DEPTH;
 		stash_count--;
-		if (!(e & 1)) continue;
+		if (!(e & 1)) { q8_aptr = applied_idx; continue; }
 		int tag  = (int)(e >> 1) & 7;
 		int r    = (int)(e >> 4) & 0x3f;
 		int data = (int)(e >> 16) & 0xffff;
@@ -547,6 +634,8 @@ static void drain_ring(void)
 			if (card_kind == CARD_Q8) q8_isr_reset();
 			break;
 		}
+		if (card_kind == CARD_Q8) trace_entry(e, (uint16_t)data);
+		q8_aptr = applied_idx;
 		push_state();
 	}
 	if (stash_count) st.drain_full++;
@@ -632,6 +721,8 @@ static void card_start(void)
 		                 ctl(ETH_Q8_DMASTAT), ctl(ETH_Q8_ISRSET), ctl(ETH_Q8_ISRACK), ring_slurp, 0 };
 		q8_init(&m);
 		q8_isr_reset();
+		pcap_open();
+		trace_n = trace_dumped = 0;
 	}
 
 	stage_macprom();
@@ -683,7 +774,8 @@ static void rxq_flush(void)
 			model_enter();
 			int r = sonic_rx_frame(rxq[rxq_head].buf, rxq[rxq_head].len);
 			if (r < 0) return;                  // still busy: keep holding, in order
-			if (r) st.rx_delivered++; else st.rx_filtered++;
+			if (r) { st.rx_delivered++; if (card_kind == CARD_Q8) pcap_frame(rxq[rxq_head].buf, rxq[rxq_head].len); }
+			else st.rx_filtered++;
 		}
 		rxq_head = (rxq_head + 1) % RXQ_DEPTH;
 		rxq_count--;
@@ -818,7 +910,7 @@ void mac_eth_poll(void)
 			if (unicast_ours) rxq_push(frame, n);
 			else st.rx_refused++;
 		}
-		else if (took) st.rx_delivered++;
+		else if (took) { st.rx_delivered++; if (card_kind == CARD_Q8) pcap_frame(frame, n); }
 		else st.rx_filtered++;
 	}
 
@@ -827,6 +919,7 @@ void mac_eth_poll(void)
 	if (CheckTimer(stats_timer))
 	{
 		stats_timer = GetTimer(1000);
+		if (card_kind == CARD_Q8) instruments_tick();
 		st.drops += (uint64_t)mac_eth_iface_drops();
 		FILE *f = fopen("/tmp/mac_eth_stats", "w");
 		if (f)
@@ -841,9 +934,20 @@ void mac_eth_poll(void)
 				        (unsigned long long)q8_stats.rpc_fail);
 				{
 					// the FPGA's own copy: what the guest reads, and the line it is interrupted by
-					uint32_t d = (uint32_t)*ctl(ETH_Q8_DEBUG);
+					uint64_t d64 = *ctl(ETH_Q8_DEBUG);
+					uint32_t d = (uint32_t)d64;
 					fprintf(f, "q8 fpga    isr=%04X imr=%04X present=%u irq=%u  (model isr=%04X)\n",
 					        d & 0x7fff, (d >> 15) & 0x7fff, (d >> 30) & 1, d >> 31, sonic_reg(SONIC_ISR));
+					// reads are served by the FPGA: a racing count names a register the guest spins on
+					fprintf(f, "q8 reads   count=%u last=%s%02X\n", (unsigned)(d64 >> 40) & 0xffff,
+					        ((d64 >> 38) & 1) ? "PROM+" : "reg ", (unsigned)(d64 >> 32) & 0x3f);
+					// the whole model, so a dump request can be aimed (UTDA:TTDA, URDA:CRDA, URRA:RRP ...)
+					for (int r0 = 0; r0 < 64; r0 += 16)
+					{
+						fprintf(f, "q8 regs %02X:", r0);
+						for (int k = 0; k < 16; k++) fprintf(f, " %04X", sonic_reg(r0 + k));
+						fprintf(f, "\n");
+					}
 				}
 				fprintf(f, "q8 ahead   %llu  bad_addr %llu\n",
 				        (unsigned long long)q8_stats.ahead_hit, (unsigned long long)q8_stats.bad_addr);
