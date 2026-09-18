@@ -187,7 +187,9 @@ void q8_isr_reset(void)
 	sonic_take_raised();
 }
 
-void q8_isr_post(void)
+// `applied` rides in the same 64-bit word: the FPGA drops its CR overlay in the clock it raises the
+// bits, as the chip clears TXP in the instant it sets TXDN (the driver reads CR in that handler).
+void q8_isr_post(uint16_t applied)
 {
 	isr_unposted |= sonic_take_raised();
 	q8_stats.isr_seq = isr_seq; q8_stats.isr_unposted = isr_unposted;
@@ -199,7 +201,7 @@ void q8_isr_post(void)
 		// keep a never-acked bit's stamp inside the signed compare window
 		else if ((int16_t)(isr_seq - isr_bit_seq[b]) > 0x3000) isr_bit_seq[b] = (uint16_t)(isr_seq - 0x3000);
 	}
-	*mbx.isr_set = ((uint64_t)isr_unposted << 16) | isr_seq;
+	*mbx.isr_set = ((uint64_t)applied << 48) | ((uint64_t)isr_unposted << 16) | isr_seq;
 	__sync_synchronize();
 	isr_unposted = 0;
 	q8_stats.isr_posts++;

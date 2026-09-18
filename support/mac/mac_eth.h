@@ -35,7 +35,7 @@
 #define ETH_Q8_CTRL     0x4000UL   // control block base
 #define ETH_Q8_WIN_SIZE 0x5000UL
 #define ETH_MAGIC_Q8    0x4D63513845544834ULL   // "McQ8ETH4"
-#define ETH_Q8_ISRSET   0x090UL    // ARM->FPGA [15:0] seq | [30:16] bits to OR into the FPGA's ISR
+#define ETH_Q8_ISRSET   0x090UL    // ARM->FPGA [15:0] seq | [30:16] bits to OR into the FPGA's ISR | [63:48] applied index
 #define ETH_Q8_ISRACK   0x098UL    // FPGA->ARM [15:0] seq consumed
 #define ETH_Q8_MACPROM  0x0A0UL    // 8 cooked PROM bytes, read on demand
 #define ETH_Q8_GEO      0x0A8UL

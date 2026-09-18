@@ -565,7 +565,7 @@ static void push_state(void)
 	if (card_kind == CARD_Q8)
 	{
 		*ctl(ETH_Q8_PTRS) = ((uint64_t)q8_aptr << 32) | rptr;
-		q8_isr_post();
+		q8_isr_post((uint16_t)q8_aptr);
 	}
 	else *ctl(ETH_CTL_INT) = sonic_int_line() ? 1 : 0;
 }

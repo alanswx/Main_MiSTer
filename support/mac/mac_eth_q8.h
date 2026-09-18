@@ -33,7 +33,7 @@ void q8_begin(void);
 // The FPGA owns ISR. The model's raises are posted as sequenced events, one post in flight at a
 // time; each doorbell entry names the last post its guest write could have seen (`seen`).
 void     q8_isr_reset(void);
-void     q8_isr_post(void);                            // post what the model raised, if the last post landed
+void     q8_isr_post(uint16_t applied);                // post what the model raised, if the last post landed
 uint16_t q8_isr_qualify(uint16_t data, uint16_t seen); // the bits of an ISR ack the replica may clear
 
 typedef struct

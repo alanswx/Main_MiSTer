@@ -237,19 +237,20 @@ static void test_isr(void)
 	uint16_t s0 = (uint16_t)isr_set;
 	uint8_t f[64]; memset(f, 0xFF, sizeof f);
 	q8_begin(); sonic_rx_frame(f, sizeof f); q8_flush();
-	q8_isr_post();
+	q8_isr_post(0x1234);
 	CHECK((uint16_t)isr_set == (uint16_t)(s0 + 1) && ((isr_set >> 16) & 0x7fff) == 0x0400, "PKTRX posted (%llX)", (unsigned long long)isr_set);
+	CHECK((isr_set >> 48) == 0x1234, "the post carries the applied index");
 
 	// second raise while the post is in flight: held back
 	q8_begin(); sonic_rx_frame(f, sizeof f); q8_flush();
-	q8_isr_post();
+	q8_isr_post(0x1234);
 	CHECK((uint16_t)isr_set == (uint16_t)(s0 + 1), "one post in flight at a time");
 
 	// a guest ack written before the FPGA consumed post #1 cannot clear the replica
 	CHECK(q8_isr_qualify(0x0400, s0) == 0, "ack older than the raise is kept");
 	// the FPGA consumes post #1; the held raise goes out as post #2
 	isr_ack = (uint16_t)(s0 + 1);
-	q8_isr_post();
+	q8_isr_post(0x1234);
 	CHECK((uint16_t)isr_set == (uint16_t)(s0 + 2), "held raise posted after the ack");
 	CHECK(q8_isr_qualify(0x0400, (uint16_t)(s0 + 1)) == 0, "ack that saw post #1 but not #2 is kept");
 	CHECK(q8_isr_qualify(0x0400, (uint16_t)(s0 + 2)) == 0x0400, "ack that saw post #2 clears");
