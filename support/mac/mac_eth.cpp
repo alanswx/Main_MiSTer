@@ -51,6 +51,7 @@ static struct
 	uint64_t rx_jumbo;          // >1518-byte frames off the tap: offload leak witness
 	uint64_t drain_full;        // drain budget exhausted with stash left: flood witness
 	uint64_t passes;            // service passes: Main's own loop rate bounds the latency
+	uint64_t rx_delivered, rx_filtered;   // what the model did with a frame it was free to take
 } st;
 static uint8_t  guest_mac[6];
 static char     ifname[64] = "eth0";
@@ -682,6 +683,7 @@ static void rxq_flush(void)
 			model_enter();
 			int r = sonic_rx_frame(rxq[rxq_head].buf, rxq[rxq_head].len);
 			if (r < 0) return;                  // still busy: keep holding, in order
+			if (r) st.rx_delivered++; else st.rx_filtered++;
 		}
 		rxq_head = (rxq_head + 1) % RXQ_DEPTH;
 		rxq_count--;
@@ -809,12 +811,15 @@ void mac_eth_poll(void)
 		// Order matters: while held frames exist a new unicast queues behind them.
 		if (unicast_ours && rxq_count) { rxq_push(frame, n); continue; }
 		model_enter();
-		if (sonic_rx_frame(frame, n) < 0)
+		int took = sonic_rx_frame(frame, n);
+		if (took < 0)
 		{
 			// refused before any state was touched: hold unicast, drop the rest
 			if (unicast_ours) rxq_push(frame, n);
 			else st.rx_refused++;
 		}
+		else if (took) st.rx_delivered++;
+		else st.rx_filtered++;
 	}
 
 	push_state();
@@ -856,7 +861,8 @@ void mac_eth_poll(void)
 			fprintf(f, "tx_frames  %llu\n", (unsigned long long)st.tx_frames);
 			fprintf(f, "tx_bytes   %llu\n", (unsigned long long)st.tx_bytes);
 			fprintf(f, "sock_drops %llu\n", (unsigned long long)st.drops);
-			fprintf(f, "rx_refused %llu\n", (unsigned long long)st.rx_refused);
+			fprintf(f, "rx_refused %llu  delivered %llu  filtered %llu\n", (unsigned long long)st.rx_refused,
+			        (unsigned long long)st.rx_delivered, (unsigned long long)st.rx_filtered);
 			fprintf(f, "rpc_fail   %llu\n", (unsigned long long)st.rpc_fail);
 			fprintf(f, "txp_cmds   %llu\n", (unsigned long long)st.txp_cmds);
 			fprintf(f, "tx_fail    %llu\n", (unsigned long long)st.tx_fail);
