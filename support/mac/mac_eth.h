@@ -1,13 +1,13 @@
-// Mac Ethernet cards: DDR3 mailbox layouts, mirrored by the cores' RTL (LC v2, NuBus v3).
+// Mac Ethernet: DDR3 mailbox layouts, mirrored by the cores' RTL (LC card v2, Quadra 800 onboard v4).
 
 #ifndef MAC_ETH_H
 #define MAC_ETH_H
 
 #include <stdint.h>
 
-// DDR3 window (ARM physical); the map covers the larger (v3) layout.
+// DDR3 window (ARM physical); the map covers the larger (LC) layout.
 #define ETH_DDR_BASE   0x1FF00000UL
-#define ETH_WIN_SIZE   0x29000UL
+#define ETH_WIN_SIZE   0x21000UL
 
 // LC card (Apple Ethernet LC Twisted Pair, 820-0532-B): layout v2.
 #define ETH_LC_OFF_XFER 0x00000UL  // 64K guest-RAM DMA bounce buffer
@@ -16,27 +16,35 @@
 #define ETH_LC_WIN_SIZE 0x21000UL
 #define ETH_MAGIC_LC    0x4D634C4345544832ULL   // "McLCETH2"
 
-// NuBus card (Apple Ethernet NB Twisted Pair, 820-0511-A): layout v3.
-#define ETH_NB_OFF_RAM  0x00000UL  // 128K on-card RAM: byte i = card byte i
-#define ETH_NB_RAM_SIZE 0x20000UL
-#define ETH_NB_OFF_ROM  0x20000UL  // 32K RAW declROM (the FPGA lane-expands byteLanes $D2)
-#define ETH_NB_ROM_SIZE 0x8000UL
-#define ETH_NB_CTRL     0x28000UL  // control block base
-#define ETH_NB_WIN_SIZE 0x29000UL
-#define ETH_MAGIC_NB    0x4D634E4245544833ULL   // "McNBETH3"
-
-// Control block (identical internal layout in both windows), relative to its base:
+// Control block, relative to its base (LC layout):
 #define ETH_CTL_MAGIC   0x000UL    // ARM->FPGA presence gate, written LAST
 #define ETH_CTL_WPTR    0x008UL    // FPGA->ARM doorbell write index (monotonic)
 #define ETH_CTL_SHAD    0x010UL    // 16 words: regs 4n..4n+3, reg 4n+k at bits [16k+15:16k]
 #define ETH_CTL_INT     0x090UL    // bit0 = SONIC INT line
 #define ETH_CTL_MACPROM 0x098UL    // 8 cooked PROM bytes (byte k = PROM byte k)
-#define ETH_CTL_GEO     0x0A0UL    // layout version (2 = LC, 3 = NB)
+#define ETH_CTL_GEO     0x0A0UL    // layout version (2 = LC, 4 = Quadra 800)
 #define ETH_CTL_RPTR    0x0A8UL    // ARM ring read index (doorbell backpressure)
-#define ETH_CTL_DMACMD  0x0B0UL    // LC only: [7:0] seq | [8] dir | [39:16] addr | [55:40] count
-#define ETH_CTL_DMASTAT 0x0B8UL    // LC only: [7:0] seq echo | [8] error
-#define ETH_CTL_RING    0x800UL    // 256 u64: valid|tag[3:1]|reg[9:4]|data[31:16]|seq[39:32]
+#define ETH_CTL_DMACMD  0x0B0UL    // [7:0] seq | [8] dir | [39:16] addr | [55:40] count
+#define ETH_CTL_DMASTAT 0x0B8UL    // [7:0] seq echo | [8] error
+#define ETH_CTL_RING    0x800UL    // 256 u64: valid|tag[3:1]|reg[9:4]|data[31:16]|seq[47:32]
 #define ETH_RING_ENTRIES 256
+
+// Quadra 800 onboard SONIC: layout v4. MAGIC/WPTR/SHAD/RING sit where the LC has them.
+#define ETH_Q8_OFF_XFER 0x0000UL   // 16K DMA staging: each op's bytes start 8-aligned
+#define ETH_Q8_XFER_SIZE 0x4000UL
+#define ETH_Q8_CTRL     0x4000UL   // control block base
+#define ETH_Q8_WIN_SIZE 0x5000UL
+#define ETH_MAGIC_Q8    0x4D63513845544834ULL   // "McQ8ETH4"
+#define ETH_Q8_ISRSET   0x090UL    // ARM->FPGA [15:0] seq | [30:16] bits to OR into the FPGA's ISR
+#define ETH_Q8_ISRACK   0x098UL    // FPGA->ARM [15:0] seq consumed
+#define ETH_Q8_MACPROM  0x0A0UL    // 8 cooked PROM bytes, read on demand
+#define ETH_Q8_GEO      0x0A8UL
+#define ETH_Q8_PTRS     0x0B0UL    // [31:0] ring read index | [63:32] applied-and-pushed index
+#define ETH_Q8_DMACMD   0x0B8UL    // [7:0] seq | [11:8] op count
+#define ETH_Q8_DMASTAT  0x0C0UL    // FPGA->ARM [7:0] seq echo
+#define ETH_Q8_OPS      0x100UL    // 8 u64: [0] dir (1 = to guest) | [31:16] bytes | [63:32] guest addr
+#define ETH_Q8_MAX_OPS  8
+#define ETH_Q8_RAM_TOP  0x08000000UL   // the engine carries addr[26:2]: 128 MB of RAM, nothing else
 
 #define ETH_TAG_REG_WR 0
 #define ETH_TAG_RESET  1
@@ -51,5 +59,6 @@ int  mac_eth_iface_send(const uint8_t *frame, int len);
 int  mac_eth_iface_recv(uint8_t *buf, int maxlen);
 int  mac_eth_iface_fd(void);
 int  mac_eth_iface_drops(void);
+int  mac_eth_iface_hwaddr(const char *name, uint8_t mac[6]);   // 1 = the interface has an address
 
 #endif

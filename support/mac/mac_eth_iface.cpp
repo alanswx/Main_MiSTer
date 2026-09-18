@@ -163,6 +163,21 @@ int mac_eth_iface_recv(uint8_t *buf, int maxlen)
 	return n;
 }
 
+// The interface's burned-in/configured address; all-zero (a tun, a down radio) counts as none.
+int mac_eth_iface_hwaddr(const char *name, uint8_t mac[6])
+{
+	int s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	if (s < 0) return 0;
+	struct ifreq ifr;
+	memset(&ifr, 0, sizeof ifr);
+	strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
+	int ok = ioctl(s, SIOCGIFHWADDR, &ifr) == 0;
+	close(s);
+	if (!ok) return 0;
+	memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
+	return (mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5]) != 0;
+}
+
 // Kernel-side drop count since the previous call (reading PACKET_STATISTICS resets it).
 int mac_eth_iface_drops(void)
 {

@@ -76,6 +76,11 @@ static uint16_t reg[64];
 static uint64_t cam[16];
 static uint16_t isr_seen;   // ack-clearable ISR bits; see sonic_fill_shadows
 
+// Local-ISR cores (Quadra 800) keep ISR in the FPGA: raises travel as events, reg[ISR] is a replica.
+static int      isr_local;
+static uint16_t isr_raised;
+static inline void isr_raise(uint16_t bits) { reg[ISR] |= bits; isr_raised |= bits; }
+
 // Redelivery window: a guest ISR ack crosses the doorbell ~1-2 ms after the shadow read it answers.
 #define ISR_REDELIVER_US 20000
 
@@ -100,7 +105,7 @@ uint32_t sonic_ea_stripped(void) { return ea_stripped_cnt; }
 uint32_t sonic_redelivered_rx(void) { return redeliver_rx; }
 uint32_t sonic_redelivered_tx(void) { return redeliver_tx; }
 
-// Slot address width: 24 for a PDS card, 32 for NuBus. Anything else is ignored.
+// Address width: 24 for the LC PDS card, 32 for the Quadra 800 onboard chip. Anything else is ignored.
 void sonic_set_addr_bits(int bits)
 {
 	if (bits == 24 || bits == 32)
@@ -117,7 +122,7 @@ sonic_tx_debug_t sonic_txd;
 #define TX_PARK(ttda) do { \
 	reg[CTDA] = (uint16_t)((ttda) | 1); \
 	reg[CR]  &= (uint16_t)~CR_TXP; \
-	reg[ISR] |= ISR_TXDN; \
+	isr_raise(ISR_TXDN); \
 	txdn_last_us = model_us; \
 	return; } while (0)
 #define TX_ABORT() do { sonic_txd.aborts++; TX_PARK(reg[TTDA]); } while (0)
@@ -154,6 +159,7 @@ void sonic_reset(void)
 	reg[TCR] &= (uint16_t)~(TCR_TPC | TCR_BCM);
 	reg[IMR]  = 0;
 	reg[ISR]  = 0;
+	isr_raised = 0;
 	reg[EOBC] = 0x02f8;
 	reg[CE]   = 0;
 	reg[RSC]  = 0;
@@ -171,6 +177,15 @@ void sonic_fill_shadows(uint16_t out[64])
 
 int sonic_int_line(void) { return (reg[ISR] & reg[IMR] & 0x7fff) != 0; }
 
+void sonic_set_isr_local(int on) { isr_local = on; }
+
+uint16_t sonic_take_raised(void)
+{
+	uint16_t r = isr_raised;
+	isr_raised = 0;
+	return r;
+}
+
 static void read_rra(int command)
 {
 	const int w = WIDTH();
@@ -183,7 +198,7 @@ static void read_rra(int command)
 
 	reg[RRP] += 4 * w;
 	if (reg[RRP] == reg[REA]) reg[RRP] = reg[RSA];
-	if (reg[RRP] == reg[RWP]) reg[ISR] |= ISR_RBE;
+	if (reg[RRP] == reg[RWP]) isr_raise(ISR_RBE);
 
 	if (command)
 		reg[CR] &= (uint16_t)~CR_RRRA;
@@ -210,7 +225,7 @@ static void load_cam(void)
 	if (host->read_words(EA(reg[URRA], reg[CDP]), &ce, 1, WIDTH())) return;
 	reg[CE] = ce;
 	reg[CR] &= (uint16_t)~CR_LCAM;
-	reg[ISR] |= ISR_LCD;
+	isr_raise(ISR_LCD);
 }
 
 static int address_filter(const uint8_t *buf)
@@ -311,14 +326,14 @@ int sonic_rx_frame(const uint8_t *frame, int len)
 	reg[CRDA] = link;
 
 	if (reg[CRDA] & 1)
-		reg[ISR] |= ISR_RDE;
+		isr_raise(ISR_RDE);
 
 	if (rbwc < reg[EOBC])
 		read_rra(0);
 	else
 		reg[RSC] = (uint16_t)((reg[RSC] & 0xff00) | (uint8_t)(reg[RSC] + 1));
 
-	reg[ISR] |= ISR_PKTRX;
+	isr_raise(ISR_PKTRX);
 	pktrx_last_us = model_us;
 	return 1;
 }
@@ -370,7 +385,7 @@ static void transmit_chain(void)
 		word += 3;
 
 		if ((reg[TCR] & TCR_PINT) && !(tcr_old & TCR_PINT))
-			reg[ISR] |= ISR_PINT;
+			isr_raise(ISR_PINT);
 
 		uint8_t buf[1520];
 		unsigned length = 0;
@@ -421,7 +436,7 @@ static void transmit_chain(void)
 		if (reg[CR] & CR_HTX)
 		{
 			// Halt-transmit ends the chain, so it must raise TXDN like every other exit.
-			reg[ISR] |= ISR_TXDN;
+			isr_raise(ISR_TXDN);
 			txdn_last_us = model_us;
 			reg[CR] &= (uint16_t)~CR_TXP;
 			return;
@@ -433,7 +448,7 @@ static void transmit_chain(void)
 		if (reg[CTDA] & 1)
 		{
 			sonic_txd.ends_eol++;
-			reg[ISR] |= ISR_TXDN;
+			isr_raise(ISR_TXDN);
 			txdn_last_us = model_us;
 			reg[CR]  &= (uint16_t)~CR_TXP;
 			return;
@@ -463,7 +478,7 @@ void sonic_time_tick(unsigned us)
 	} else
 	{
 		wt = 0;
-		reg[ISR] |= ISR_TC;               // the deadman the driver waits for
+		isr_raise(ISR_TC);               // the deadman the driver waits for
 	}
 	reg[WT0] = (uint16_t)wt;
 	reg[WT1] = (uint16_t)(wt >> 16);
@@ -522,6 +537,15 @@ void sonic_reg_write(int r, uint16_t data)
 
 	case ISR:
 	{
+		if (isr_local)
+		{
+			// The caller passes only bits the guest saw set. Clear first, so an RBE the reload
+			// raises again (still no resources) survives as a fresh event (QEMU's order).
+			uint16_t was = reg[r];
+			reg[r] &= (uint16_t)~(data & regmask[r]);
+			if (was & data & ISR_RBE) read_rra(0);
+			break;
+		}
 		// The guest can only clear bits it has SEEN; a bit set since the last push survives.
 		data &= isr_seen;
 		isr_seen &= (uint16_t)~data;

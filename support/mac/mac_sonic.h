@@ -22,6 +22,10 @@ void     sonic_reg_write(int reg, uint16_t data);
 uint16_t sonic_reg(int reg);                   // current value (shadow source)
 void     sonic_fill_shadows(uint16_t regs[64]);
 int      sonic_int_line(void);                 // level: ISR & IMR & 0x7fff
+// Local-ISR cores: the FPGA owns ISR. Raises are taken as events and posted to it; an ISR
+// write passed to sonic_reg_write must already be cut down to the bits the guest saw set.
+void     sonic_set_isr_local(int on);
+uint16_t sonic_take_raised(void);              // ISR bits raised since the last call
 // Deliver one frame (no FCS): 1 = delivered, 0 = dropped, -1 = busy before any state changed.
 int      sonic_rx_frame(const uint8_t *frame, int len);
 // Resume a budget-suspended transmit chain from the poll; a no-op when none is suspended.
@@ -31,7 +35,7 @@ void     sonic_time_tick(unsigned us);
 uint32_t sonic_ea_stripped(void);              // dirty-top-byte addrs masked (24-bit-mode witness)
 uint32_t sonic_redelivered_rx(void);           // PKTRX acks re-asserted by the redelivery guard
 uint32_t sonic_redelivered_tx(void);           // TXDN acks re-asserted by the redelivery guard
-void     sonic_set_addr_bits(int bits);        // slot address lines: 24 = PDS, 32 = NuBus
+void     sonic_set_addr_bits(int bits);        // address lines: 24 = LC PDS, 32 = Quadra 800 onboard
 // TX-path witnesses (counters only; see the block above transmit_chain)
 typedef struct
 {

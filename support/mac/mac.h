@@ -1,4 +1,4 @@
-// Mac SCSI family (MacLC/MacLCII, MacIIvi, LBMacTwo) — glue between the
+// Mac SCSI family (MacLC/MacLCII, MacPlus, MacQuadra800) — glue between the
 // common code and the mac support modules. All hooks self-gate on the family.
 
 #ifndef MAC_H
@@ -21,8 +21,8 @@ char is_mac_scsi_family();
 // never address those LBAs.
 char is_mac_scsi_optimized();
 
-// hps_io slots; -1 = the core lacks the device. One shared family layout
-// (LBMacTwo: none). A wrong slot corrupts another device's sector stream.
+// hps_io slots; -1 = the core lacks the device. One shared family layout.
+// A wrong slot corrupts another device's sector stream.
 int mac_toolbox_slot();
 int mac_cdrom_slot();
 int mac_cd_toolbox_slot();

@@ -1,4 +1,4 @@
-// Mac Ethernet service — Main side of the Apple Ethernet cards (mac_eth.h): LC PDS and NuBus TP.
+// Mac Ethernet service — Main side of the SONIC front-ends (mac_eth.h): LC PDS card, Quadra 800 onboard.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,9 +15,11 @@
 #include "mac_eth.h"
 #include "mac_sonic.h"
 #include "mac_eth_declrom.h"
+#include "mac_eth_q8.h"
 
-// Card personality: LC bus-masters guest RAM via the DMA-RPC engine, NB owns 128K card RAM in the window.
-enum { CARD_LC, CARD_NB };
+// Personality: the LC card (24-bit DMA-RPC, shadows and INT polled by the FPGA) or the Quadra 800's
+// onboard chip (op-list DMA, ISR/IMR owned by the FPGA, no declaration ROM).
+enum { CARD_LC, CARD_Q8 };
 static int card_kind;
 
 static volatile uint8_t *win;   // the mapped DDR3 window
@@ -48,6 +50,7 @@ static struct
 	uint64_t rx_held, rx_held_max;    // unicasts held for redelivery / depth watermark
 	uint64_t rx_jumbo;          // >1518-byte frames off the tap: offload leak witness
 	uint64_t drain_full;        // drain budget exhausted with stash left: flood witness
+	uint64_t passes;            // service passes: Main's own loop rate bounds the latency
 } st;
 static uint8_t  guest_mac[6];
 static char     ifname[64] = "eth0";
@@ -64,10 +67,14 @@ static volatile uint64_t *ctl(uint32_t rel)
 }
 
 // Iface and MAC suffix live in Main-owned status bits, a2065-style: the FPGA never reads them.
-#define ETH_OPT_IFACE  "[37:36]"   // core: "o45,Net interface,eth0,tap0,macvlan,eth1"
-#define ETH_OPT_MACSUF "[35:32]"   // "o03,MAC suffix,0..F"; Main-only, clear of the core's [31:0]
-
+#define ETH_OPT_IFACE  "[37:36]"   // MacLC: "o45,Net interface,eth0,tap0,macvlan,eth1"
+#define ETH_OPT_MACSUF "[35:32]"   // MacLC: "o03,MAC suffix,0..F"; Main-only, clear of the core's [31:0]
 static const char *const iface_names[4] = { "eth0", "tap0", "macvlan", "eth1" };
+
+// MacQuadra800: bits 35-43 are its MT32-pi page, so the options sit low. The core reads [6] too.
+#define Q8_OPT_ENABLE  "[6]"       // "O[6],Ethernet (on reset),Off,On"
+#define Q8_OPT_IFACE   "[8:7]"     // "O[8:7],Net interface,eth0,eth1,wlan0,tap0"
+static const char *const q8_iface_names[4] = { "eth0", "eth1", "wlan0", "tap0" };
 
 // Fixed base + OSD nibble: all selections stay unicast, and nothing on a stock DE10-Nano is unique.
 #define MAC_OUI_0   0x08
@@ -75,9 +82,9 @@ static const char *const iface_names[4] = { "eth0", "tap0", "macvlan", "eth1" };
 #define MAC_OUI_2   0x07
 #define MAC_FAMILY  0x4D           // 'M'
 #define MAC_CORE_LC 0x4C           // 'L' - MacLC; every Mac core needs its own byte
-#define MAC_CORE_NB 0x56           // 'V' - MacIIvi
+#define MAC_CORE_Q8 0x51           // 'Q' - MacQuadra800, only when no interface has an address
 
-// Slot address lines: 24 on the LC PDS, 32 on NuBus; a wrong value DMAs to the wrong address.
+// Slot address lines: 24 on the LC PDS; a wrong value DMAs to the wrong address.
 #define ADDR_BITS_DEFAULT 24
 #define DECLROM_NAME      "ethernet.rom"
 static int addr_bits = ADDR_BITS_DEFAULT;
@@ -89,19 +96,42 @@ static int core_is_maclc(void)
 	    || !strcasecmp(user_io_get_core_name(1), "maclc");
 }
 
-// NuBus-card cores, exact-matched for the same reason.
-static int core_is_maciivi(void)
+// The Quadra 800's onboard SONIC, exact-matched for the same reason.
+static int core_is_q800(void)
 {
-	return !strcasecmp(user_io_get_core_name(0), "maciivi")
-	    || !strcasecmp(user_io_get_core_name(1), "maciivi");
+	return !strcasecmp(user_io_get_core_name(0), "macquadra800")
+	    || !strcasecmp(user_io_get_core_name(1), "macquadra800");
 }
 
-// Optional <HomeDir>/eth.cfg overrides the OSD and the per-core defaults.
+// Quadra 800: Apple's OUI + the last three octets of the MiSTer's own address, so every box is
+// distinct with nothing to configure. The only override is the MiSTer's address itself.
+static void q8_config(void)
+{
+	snprintf(ifname, sizeof ifname, "%s", q8_iface_names[user_io_status_get(Q8_OPT_IFACE) & 3]);
+	guest_mac[0] = MAC_OUI_0; guest_mac[1] = MAC_OUI_1; guest_mac[2] = MAC_OUI_2;
+	guest_mac[3] = MAC_FAMILY; guest_mac[4] = MAC_CORE_Q8; guest_mac[5] = 0;
+
+	// A tap has a random address of its own; the box is its wired port, then its radio.
+	const char *const from[3] = { ifname, "eth0", "wlan0" };
+	uint8_t hw[6];
+	for (int i = strncmp(ifname, "tap", 3) ? 0 : 1; i < 3; i++)
+		if (mac_eth_iface_hwaddr(from[i], hw))
+		{
+			guest_mac[3] = hw[3]; guest_mac[4] = hw[4]; guest_mac[5] = hw[5];
+			return;
+		}
+	printf("mac_eth: no interface with a hardware address - fixed MAC\n");
+}
+
+// MacLC: an optional <HomeDir>/eth.cfg overrides the OSD and the per-core defaults.
 static void load_config(void)
 {
+	if (card_kind == CARD_Q8) { q8_config(); return; }
+
+	snprintf(ifname, sizeof ifname, "%s", iface_names[user_io_status_get(ETH_OPT_IFACE) & 3]);
 	guest_mac[0] = MAC_OUI_0; guest_mac[1] = MAC_OUI_1; guest_mac[2] = MAC_OUI_2;
 	guest_mac[3] = MAC_FAMILY;
-	guest_mac[4] = (card_kind == CARD_NB) ? MAC_CORE_NB : MAC_CORE_LC;
+	guest_mac[4] = MAC_CORE_LC;
 	guest_mac[5] = (uint8_t)(user_io_status_get(ETH_OPT_MACSUF) & 0xF);
 	addr_bits = ADDR_BITS_DEFAULT;
 
@@ -279,50 +309,9 @@ static const sonic_host_ops lc_host_ops = {
 	gw_read_words, gw_write_words, gb_read, gb_write, wire_send
 };
 
-// NB backend: the card's space maps its RAM at slot_base, so the low 17 bits of any SONIC address land in the window.
-#define NB_RAM_MASK (ETH_NB_RAM_SIZE - 1)
-
-static int nb_read_words(uint32_t ga, uint16_t *v, int n, int stride)
-{
-	volatile uint8_t *ram = win + ETH_NB_OFF_RAM;
-	if (n <= 0 || n > 64) return -1;
-	for (int i = 0; i < n; i++)
-	{
-		uint32_t a = (ga + (uint32_t)i * stride + (stride == 4 ? 2 : 0)) & NB_RAM_MASK;
-		v[i] = (uint16_t)((ram[a] << 8) | ram[(a + 1) & NB_RAM_MASK]);
-	}
-	return 0;
-}
-
-static int nb_write_words(uint32_t ga, const uint16_t *v, int n, int stride)
-{
-	volatile uint8_t *ram = win + ETH_NB_OFF_RAM;
-	if (n <= 0 || n > 64) return -1;
-	for (int i = 0; i < n; i++)
-	{
-		uint32_t a = (ga + (uint32_t)i * stride + (stride == 4 ? 2 : 0)) & NB_RAM_MASK;
-		ram[a] = (uint8_t)(v[i] >> 8);
-		ram[(a + 1) & NB_RAM_MASK] = (uint8_t)v[i];
-	}
-	return 0;
-}
-
-static int nb_read_bytes(uint32_t ga, uint8_t *b, int n)
-{
-	volatile uint8_t *ram = win + ETH_NB_OFF_RAM;
-	for (int i = 0; i < n; i++) b[i] = ram[(ga + (uint32_t)i) & NB_RAM_MASK];
-	return 0;
-}
-
-static int nb_write_bytes(uint32_t ga, const uint8_t *b, int n)
-{
-	volatile uint8_t *ram = win + ETH_NB_OFF_RAM;
-	for (int i = 0; i < n; i++) ram[(ga + (uint32_t)i) & NB_RAM_MASK] = b[i];
-	return 0;
-}
-
-static const sonic_host_ops nb_host_ops = {
-	nb_read_words, nb_write_words, nb_read_bytes, nb_write_bytes, wire_send
+// Quadra 800 backend: the op-list engine (mac_eth_q8.cpp).
+static const sonic_host_ops q8_host_ops = {
+	q8_read_words, q8_write_words, q8_read_bytes, q8_write_bytes, wire_send
 };
 
 // Apple declaration ROM CRC: rotate-left-1 then add, with the stored CRC read as zero.
@@ -376,8 +365,8 @@ static uint32_t declrom_len;
 
 static int load_declrom(int quiet)
 {
-	// LC ROM 341-0740 is flat (byteLanes $0F); the NB ROM 341-1096 is lane 1 only ($D2).
-	uint8_t want_lanes = (card_kind == CARD_NB) ? 0xD2 : 0x0F;
+	// LC ROM 341-0740 is flat (byteLanes $0F).
+	uint8_t want_lanes = 0x0F;
 	declrom_len = 0;
 
 	char path[1200];
@@ -418,15 +407,6 @@ static int load_declrom(int quiet)
 
 static void stage_declrom(void)
 {
-	if (card_kind == CARD_NB)
-	{
-		// RAW image right-aligned in the 32K ROMRAW region; the FPGA lane-expands.
-		volatile uint8_t *rom = win + ETH_NB_OFF_ROM;
-		for (uint32_t i = 0; i < ETH_NB_ROM_SIZE; i++) rom[i] = 0;
-		uint32_t off = ETH_NB_ROM_SIZE - declrom_len;
-		for (uint32_t i = 0; i < declrom_len; i++) rom[off + i] = declrom[i];
-		return;
-	}
 	// LC: flat image (byteLanes $0F) right-aligned in the top half of the 64K window.
 	volatile uint8_t *rom = win + ETH_LC_OFF_ROM;
 	for (uint32_t i = 0; i < 0x10000; i++) rom[i] = 0;
@@ -456,11 +436,17 @@ static void stage_macprom(void)
 	prom[7] = (uint8_t)(x ^ 0xff);
 	uint64_t v = 0;
 	for (int i = 0; i < 8; i++) v |= (uint64_t)prom[i] << (8 * i);
-	*ctl(ETH_CTL_MACPROM) = v;
+	*ctl(card_kind == CARD_Q8 ? ETH_Q8_MACPROM : ETH_CTL_MACPROM) = v;
 }
+
+// Quadra 800: ring index past the last entry applied and pushed (the FPGA's CR overlay waits on it).
+static uint32_t q8_aptr;
 
 static void push_state(void)
 {
+	// Deferred guest-RAM writes land before anything tells the guest to look at them.
+	if (card_kind == CARD_Q8) q8_flush();
+
 	uint16_t r[64];
 	sonic_fill_shadows(r);
 	for (int n = 0; n < 16; n++)
@@ -471,13 +457,28 @@ static void push_state(void)
 		*ctl(ETH_CTL_SHAD + 8 * n) = v;
 	}
 	__sync_synchronize();   // the ISR the guest handler reads is never stale
-	*ctl(ETH_CTL_INT) = sonic_int_line() ? 1 : 0;
+	if (card_kind == CARD_Q8)
+	{
+		*ctl(ETH_Q8_PTRS) = ((uint64_t)q8_aptr << 32) | rptr;
+		q8_isr_post();
+	}
+	else *ctl(ETH_CTL_INT) = sonic_int_line() ? 1 : 0;
 }
+
+// Every entry into the model starts from the guest's current RAM, not a remembered read.
+static void model_enter(void) { if (card_kind == CARD_Q8) q8_begin(); }
 
 // Doorbell ring: slurp (stash + publish RPTR) is safe inside a host op, apply re-enters the model.
 #define STASH_DEPTH 1024
 static uint64_t ring_stash[STASH_DEPTH];
+static uint32_t ring_stash_idx[STASH_DEPTH];
 static int stash_head, stash_count;
+
+static void publish_rptr(void)
+{
+	if (card_kind == CARD_Q8) *ctl(ETH_Q8_PTRS) = ((uint64_t)q8_aptr << 32) | rptr;
+	else *ctl(ETH_CTL_RPTR) = rptr;
+}
 
 static void ring_slurp(void)
 {
@@ -487,6 +488,8 @@ static void ring_slurp(void)
 	{
 		printf("mac_eth: wptr regressed (%u < %u) — FPGA reset, resync\n", wp, rptr);
 		rptr = 0;
+		q8_aptr = 0;
+		stash_head = stash_count = 0;   // what the guest wrote before its reset dies with it
 	}
 	uint32_t backlog = wp - rptr;
 	if (backlog > st.ring_max) st.ring_max = backlog;
@@ -500,13 +503,16 @@ static void ring_slurp(void)
 	while (rptr != wp && guard--)
 	{
 		uint64_t e = *ctl(ETH_CTL_RING + 8 * (rptr & (ETH_RING_ENTRIES - 1)));
-		rptr++;
 		if (stash_count < STASH_DEPTH)
+		{
+			ring_stash_idx[(stash_head + stash_count) % STASH_DEPTH] = rptr;
 			ring_stash[(stash_head + stash_count++) % STASH_DEPTH] = e;
+		}
 		else
 			st.ring_ovf++;   // stash full: a multi-second stall, writes lost
+		rptr++;
 	}
-	*ctl(ETH_CTL_RPTR) = rptr;   // release the guest-bus throttle
+	publish_rptr();   // release the guest-bus throttle
 }
 
 // Bounded + publish per applied entry: the guest ISR spins until its acks read back applied.
@@ -518,20 +524,27 @@ static void drain_ring(void)
 	while (stash_count && budget--)
 	{
 		uint64_t e = ring_stash[stash_head];
+		q8_aptr = ring_stash_idx[stash_head] + 1;
 		stash_head = (stash_head + 1) % STASH_DEPTH;
 		stash_count--;
 		if (!(e & 1)) continue;
 		int tag  = (int)(e >> 1) & 7;
 		int r    = (int)(e >> 4) & 0x3f;
 		int data = (int)(e >> 16) & 0xffff;
+		model_enter();
 		switch (tag)
 		{
 		case ETH_TAG_REG_WR:
 			st.reg_wr[r & 0x3f]++;
 			if (r == SONIC_CR && (data & 0x0002)) st.txp_cmds++;   // CR_TXP
+			if (card_kind == CARD_Q8 && r == SONIC_ISR)
+				data = q8_isr_qualify((uint16_t)data, (uint16_t)(e >> 32));
 			sonic_reg_write(r, (uint16_t)data);
 			break;
-		case ETH_TAG_RESET:  sonic_reset(); break;
+		case ETH_TAG_RESET:
+			sonic_reset();
+			if (card_kind == CARD_Q8) q8_isr_reset();
+			break;
 		}
 		push_state();
 	}
@@ -545,6 +558,7 @@ static uint32_t fail_announced = SEL_NONE;
 
 static uint32_t sel_snapshot(void)
 {
+	if (core_is_q800()) return 0x10000 | (user_io_status_get(Q8_OPT_IFACE) & 3);
 	return (user_io_status_get(ETH_OPT_IFACE) & 3) |
 	       ((user_io_status_get(ETH_OPT_MACSUF) & 0xF) << 8);
 }
@@ -573,14 +587,14 @@ static void announce_down(const char *what)
 // Nothing is written until every failure path passes: no MAGIC means the slot stays open-bus.
 static void card_start(void)
 {
-	card_kind = core_is_maciivi() ? CARD_NB : CARD_LC;
-	ctrl_base = (card_kind == CARD_NB) ? ETH_NB_CTRL : ETH_LC_CTRL;
+	card_kind = core_is_q800() ? CARD_Q8 : CARD_LC;
+	ctrl_base = (card_kind == CARD_Q8) ? ETH_Q8_CTRL : ETH_LC_CTRL;
 	load_config();
 	sel_cur = sel_snapshot();
 
 	// Keep retrying so a repaired ROM takes effect on the next core load; latch the complaint.
 	int quiet = (fail_announced == sel_cur);
-	if (!load_declrom(quiet))
+	if (card_kind == CARD_LC && !load_declrom(quiet))
 	{
 		announce_down("no declaration ROM");
 		return;
@@ -595,29 +609,38 @@ static void card_start(void)
 	}
 	fail_announced = SEL_NONE;
 
-	sonic_init(card_kind == CARD_NB ? &nb_host_ops : &lc_host_ops);
-	// NB SONIC addresses are slot forms masked into card RAM, never stripped to 24 bits.
-	sonic_set_addr_bits(card_kind == CARD_NB ? 32 : addr_bits);
+	sonic_init(card_kind == CARD_Q8 ? &q8_host_ops : &lc_host_ops);
+	// The onboard chip masters the whole physical map; the LC slot has 24 address lines.
+	sonic_set_addr_bits(card_kind == CARD_Q8 ? 32 : addr_bits);
+	sonic_set_isr_local(card_kind == CARD_Q8);
 
 	rptr = (uint32_t)*ctl(ETH_CTL_WPTR);   // skip anything stale
-	*ctl(ETH_CTL_RPTR) = rptr;             // release ring backpressure
+	q8_aptr = rptr;
+	publish_rptr();                        // release ring backpressure
 	stash_head = stash_count = 0;          // stale stashed writes die with the session
 	if (card_kind == CARD_LC)
 	{
 		dma_seq = 0;
 		*ctl(ETH_CTL_DMACMD)  = 0;         // engine reset state: seq 0 done
 		*ctl(ETH_CTL_DMASTAT) = 0;
+		stage_declrom();
+	}
+	else
+	{
+		q8_mailbox m = { win + ETH_Q8_OFF_XFER, ctl(ETH_Q8_OPS), ctl(ETH_Q8_DMACMD),
+		                 ctl(ETH_Q8_DMASTAT), ctl(ETH_Q8_ISRSET), ctl(ETH_Q8_ISRACK), ring_slurp, 0 };
+		q8_init(&m);
+		q8_isr_reset();
 	}
 
-	stage_declrom();
 	stage_macprom();
 	push_state();
-	*ctl(ETH_CTL_GEO) = (card_kind == CARD_NB) ? 3 : 2;   // layout version
+	*ctl(card_kind == CARD_Q8 ? ETH_Q8_GEO : ETH_CTL_GEO) = (card_kind == CARD_Q8) ? 4 : 2;   // layout version
 	__sync_synchronize();
-	*ctl(ETH_CTL_MAGIC) = (card_kind == CARD_NB) ? ETH_MAGIC_NB : ETH_MAGIC_LC;
+	*ctl(ETH_CTL_MAGIC) = (card_kind == CARD_Q8) ? ETH_MAGIC_Q8 : ETH_MAGIC_LC;
 	card_up = 1;
-	printf("mac_eth: %s card up (iface %s, MAC %02X:%02X:%02X:%02X:%02X:%02X)\n",
-	       card_kind == CARD_NB ? "NuBus" : "LC PDS", ifname,
+	printf("mac_eth: %s up (iface %s, MAC %02X:%02X:%02X:%02X:%02X:%02X)\n",
+	       card_kind == CARD_Q8 ? "Quadra 800 SONIC" : "LC PDS card", ifname,
 	       guest_mac[0], guest_mac[1], guest_mac[2],
 	       guest_mac[3], guest_mac[4], guest_mac[5]);
 }
@@ -656,6 +679,7 @@ static void rxq_flush(void)
 			st.rx_refused++;                    // expired: count as real loss
 		} else
 		{
+			model_enter();
 			int r = sonic_rx_frame(rxq[rxq_head].buf, rxq[rxq_head].len);
 			if (r < 0) return;                  // still busy: keep holding, in order
 		}
@@ -679,6 +703,8 @@ static int core_has_card(void)
 {
 	if (!is_mac_scsi_family()) return 0;
 	if (core_is_maclc()) return 1;
+	// The onboard chip needs no ROM; its OSD switch also spares the box a promiscuous socket.
+	if (core_is_q800()) return user_io_status_get(Q8_OPT_ENABLE) & 1;
 	return FileExists(user_io_make_filepath(HomeDir(), DECLROM_NAME));
 }
 
@@ -697,14 +723,18 @@ void mac_eth_poll(void)
 		{
 			// Both layouts: whichever core loads must find its gate clear.
 			*(volatile uint64_t *)(w + ETH_LC_CTRL + ETH_CTL_MAGIC) = 0;
-			*(volatile uint64_t *)(w + ETH_NB_CTRL + ETH_CTL_MAGIC) = 0;
+			*(volatile uint64_t *)(w + ETH_Q8_CTRL + ETH_CTL_MAGIC) = 0;
 			shmem_unmap((void *)w, ETH_WIN_SIZE);
 		}
 	}
 
-	// ~1 ms service pace; core-name recheck each second
-	if (!CheckTimer(pace_timer)) return;
-	pace_timer = GetTimer(1);
+	// ~1 ms service pace, except the Quadra 800: its interrupt and DMA paths answer in tens of
+	// microseconds, so Main's own latency is the throughput. Core-name recheck each second.
+	if (!(card_up && card_kind == CARD_Q8))
+	{
+		if (!CheckTimer(pace_timer)) return;
+		pace_timer = GetTimer(1);
+	}
 
 	if (CheckTimer(name_timer))
 	{
@@ -731,12 +761,15 @@ void mac_eth_poll(void)
 
 	if (!card_up) return;
 
+	st.passes++;
 	drain_ring();
 	// Alternate apply/resume until the chain ends: the guest spin-polls TXP with its tick frozen.
+	model_enter();
 	sonic_tx_continue();
 	for (int spins = 32; (sonic_reg(SONIC_CR) & SONIC_CR_TXP) && spins; spins--)
 	{
 		drain_ring();
+		model_enter();
 		sonic_tx_continue();
 	}
 
@@ -775,6 +808,7 @@ void mac_eth_poll(void)
 		}
 		// Order matters: while held frames exist a new unicast queues behind them.
 		if (unicast_ours && rxq_count) { rxq_push(frame, n); continue; }
+		model_enter();
 		if (sonic_rx_frame(frame, n) < 0)
 		{
 			// refused before any state was touched: hold unicast, drop the rest
@@ -792,6 +826,20 @@ void mac_eth_poll(void)
 		FILE *f = fopen("/tmp/mac_eth_stats", "w");
 		if (f)
 		{
+			if (card_kind == CARD_Q8)
+			{
+				fprintf(f, "q8 passes  %llu\n", (unsigned long long)st.passes);
+				fprintf(f, "q8 rpc     %llu  ops %llu  us_avg %llu  us_max %llu  slept %llu  fail %llu\n",
+				        (unsigned long long)q8_stats.rpc, (unsigned long long)q8_stats.ops,
+				        (unsigned long long)(q8_stats.rpc ? q8_stats.rpc_us / q8_stats.rpc : 0),
+				        (unsigned long long)q8_stats.rpc_us_max, (unsigned long long)q8_stats.rpc_slept,
+				        (unsigned long long)q8_stats.rpc_fail);
+				fprintf(f, "q8 ahead   %llu  bad_addr %llu\n",
+				        (unsigned long long)q8_stats.ahead_hit, (unsigned long long)q8_stats.bad_addr);
+				fprintf(f, "q8 isr     posts %llu  acks_kept %llu  seq %u  ack %u  unposted %04X\n",
+				        (unsigned long long)q8_stats.isr_posts, (unsigned long long)q8_stats.isr_acks_kept,
+				        q8_stats.isr_seq, (unsigned)(uint16_t)*ctl(ETH_Q8_ISRACK), q8_stats.isr_unposted);
+			}
 			fprintf(f, "rpc        %llu\n", (unsigned long long)st.rpc);
 			fprintf(f, "rpc_slept  %llu\n", (unsigned long long)st.rpc_slept);
 			fprintf(f, "rpc_us_avg %llu\n",

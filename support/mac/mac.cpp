@@ -20,9 +20,7 @@ static char is_core_named(const char *n)
 
 char is_mac_scsi_family()
 {
-	return is_core_named("maclc") || is_core_named("lbmactwo") || is_core_named("maciivi")
-	    || is_core_named("macplus")
-	    || is_core_named("macquadra800");
+	return is_core_named("maclc") || is_core_named("macplus") || is_core_named("macquadra800");
 }
 
 // The cores that read the CD slot's response / next-frame windows and write
@@ -38,10 +36,9 @@ char is_mac_scsi_optimized()
 
 // Slot availability is not uniform across the family, so the gates split rather
 // than sharing one predicate. A wrong slot corrupts another device's stream:
-//   LBMacTwo  — declares none of them.
 //   MacPlus   — has the CD-ROM slot but NOT the Toolbox slots. Its slot 3 is
 //               the second floppy, and it has no slot 5 at all (VDNUM = 5).
-static int mac_cd_ok(void)      { return is_mac_scsi_family() && !is_core_named("lbmactwo"); }
+static int mac_cd_ok(void)      { return is_mac_scsi_family(); }
 static int mac_toolbox_ok(void) { return mac_cd_ok() && !is_core_named("macplus"); }
 
 int mac_toolbox_slot()    { return mac_toolbox_ok() ? MAC_TOOLBOX_SLOT    : -1; }
