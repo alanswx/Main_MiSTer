@@ -43,6 +43,7 @@
 #define ETH_Q8_DMACMD   0x0B8UL    // [7:0] seq | [11:8] op count
 #define ETH_Q8_DMASTAT  0x0C0UL    // FPGA->ARM [7:0] seq echo
 #define ETH_Q8_DEBUG    0x0C8UL    // FPGA->ARM [14:0] ISR | [29:15] IMR | [30] present | [31] irq, as the guest sees them
+#define ETH_Q8_SAMPLE   0x0D0UL    // FPGA->ARM [31:0] CPU PC | [47:32] SR, once per FPGA poll round
 #define ETH_Q8_OPS      0x100UL    // 8 u64: [0] dir (1 = to guest) | [31:16] bytes | [63:32] guest addr
 #define ETH_Q8_MAX_OPS  8
 #define ETH_Q8_RAM_TOP  0x08000000UL   // the engine carries addr[26:2]: 128 MB of RAM, nothing else

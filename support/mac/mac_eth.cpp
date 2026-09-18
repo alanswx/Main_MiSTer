@@ -322,6 +322,25 @@ static void pcap_frame(const uint8_t *f, int n)
 	pcap_bytes += (uint32_t)n + 16;
 }
 
+// PC profiler: the FPGA republishes the CPU's PC every poll round; one sample per service pass.
+#define PROF_SLOTS 256
+static struct { uint32_t pc, n; uint16_t sr; } prof[PROF_SLOTS];
+static uint32_t prof_total;
+
+static void prof_sample(void)
+{
+	uint64_t s = *ctl(ETH_Q8_SAMPLE);
+	uint32_t pc = (uint32_t)s;
+	unsigned h = (pc >> 1) % PROF_SLOTS;
+	for (int k = 0; k < PROF_SLOTS; k++, h = (h + 1) % PROF_SLOTS)
+	{
+		if (prof[h].n && prof[h].pc != pc) continue;
+		prof[h].pc = pc; prof[h].sr = (uint16_t)(s >> 32); prof[h].n++;
+		break;
+	}
+	prof_total++;
+}
+
 static void trace_entry(uint64_t e, uint16_t applied)
 {
 	trace[trace_n % TRACE_LEN].t = now_us();
@@ -856,6 +875,7 @@ void mac_eth_poll(void)
 	if (!card_up) return;
 
 	st.passes++;
+	if (card_kind == CARD_Q8) prof_sample();
 	drain_ring();
 	// Alternate apply/resume until the chain ends: the guest spin-polls TXP with its tick frozen.
 	model_enter();
@@ -941,6 +961,19 @@ void mac_eth_poll(void)
 					// reads are served by the FPGA: a racing count names a register the guest spins on
 					fprintf(f, "q8 reads   count=%u last=%s%02X\n", (unsigned)(d64 >> 40) & 0xffff,
 					        ((d64 >> 38) & 1) ? "PROM+" : "reg ", (unsigned)(d64 >> 32) & 0x3f);
+					// where the guest's CPU was, this second: top program counters by sample count
+					for (int top = 0; top < 8 && prof_total; top++)
+					{
+						int best = -1;
+						for (int k = 0; k < PROF_SLOTS; k++)
+							if (prof[k].n && (best < 0 || prof[k].n > prof[best].n)) best = k;
+						if (best < 0) break;
+						fprintf(f, "q8 pc      %08X sr=%04X %5.1f%%\n", prof[best].pc, prof[best].sr,
+						        100.0 * prof[best].n / prof_total);
+						prof[best].n = 0;
+					}
+					memset(prof, 0, sizeof prof);
+					prof_total = 0;
 					// the whole model, so a dump request can be aimed (UTDA:TTDA, URDA:CRDA, URRA:RRP ...)
 					for (int r0 = 0; r0 < 64; r0 += 16)
 					{
