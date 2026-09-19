@@ -13,6 +13,8 @@ q8_stats_t q8_stats;
 
 static q8_mailbox mbx;
 static uint8_t    seq;
+// The engine reads its ops and the XFER window on demand: a list it has not finished is never overwritten.
+static int        stale;
 
 // Queued ops: each op's bytes sit at an 8-aligned XFER offset, guest byte (ga & ~3) + j at xoff + j.
 static struct
@@ -40,6 +42,7 @@ void q8_init(const q8_mailbox *m)
 {
 	mbx = *m;
 	seq = (uint8_t)*mbx.cmd;   // the engine adopts the staged seq as done at first sight
+	stale = 0;
 	nq = 0;
 	xnext = 0;
 	ahead_len = 0;
@@ -53,6 +56,23 @@ static uint32_t span_of(uint32_t ga, uint32_t len) { return ((ga & 3) + len + 3)
 static int run(void)
 {
 	if (!nq) return 0;
+	if (stale)
+	{
+		uint64_t t0 = now_us();
+		while ((uint8_t)*mbx.stat != seq && now_us() - t0 < 2000000)
+		{
+			if (mbx.idle) mbx.idle();
+			usleep(50);
+		}
+		if ((uint8_t)*mbx.stat != seq)
+		{
+			q8_stats.rpc_fail++;
+			nq = 0;
+			xnext = 0;
+			return -1;
+		}
+		stale = 0;
+	}
 	for (int i = 0; i < nq; i++)
 		mbx.ops[i] = ((uint64_t)q[i].ga << 32) | ((uint64_t)q[i].len << 16) | (q[i].wr ? 1 : 0);
 	if (++seq == 0) seq = 1;   // 0 = the engine's reset state
@@ -72,6 +92,7 @@ static int run(void)
 		if (el > 250000)
 		{
 			printf("mac_eth: DMA timeout (seq %u, %d ops, first %08X+%u)\n", seq, nq, q[0].ga, q[0].len);
+			stale = !mbx.wait;
 			break;
 		}
 		if (el > SPIN_US) { usleep(50); slept = 1; }
