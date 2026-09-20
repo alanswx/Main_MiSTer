@@ -1197,6 +1197,7 @@ int GetUARTMode()
 	if (!stat("/tmp/uartmode4", &filestat)) return 4;
 	if (!stat("/tmp/uartmode5", &filestat)) return 5;
 	if (!stat("/tmp/uartmode6", &filestat)) return 6;
+	if (!stat("/tmp/uartmode7", &filestat)) return 7;
 	return 0;
 }
 

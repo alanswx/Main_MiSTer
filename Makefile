@@ -65,6 +65,8 @@ ifeq ($(PROFILING),1)
 	DFLAGS += -DPROFILING
 endif
 
+all: $(BUILDDIR)/$(PRJ) $(BUILDDIR)/mister_printerd
+
 $(BUILDDIR)/$(PRJ): $(OBJ)
 	$(Q)$(info $@)
 	$(Q)$(CC) -o $@ $+ $(LFLAGS)
@@ -104,3 +106,15 @@ $(BUILDDIR)/%.cpp.d: %.cpp
 
 # Ensure correct time stamp
 $(BUILDDIR)/main.cpp.o: $(filter-out $(BUILDDIR)/main.cpp.o, $(OBJ))
+
+PRINTERD_SRCS = $(wildcard support/printer/*.c)
+
+$(BUILDDIR)/mister_printerd: $(PRINTERD_SRCS)
+	@mkdir -p $(BUILDDIR)
+	$(Q)$(info $@)
+	$(Q)$(CC) -O2 -Wall -Wno-format -Wno-format-truncation -Isupport/printer $(PRINTERD_SRCS) -lm -o $@
+ifneq ($(DEBUG),1)
+	$(Q)$(STRIP) $@
+endif
+
+printerd: $(BUILDDIR)/mister_printerd
