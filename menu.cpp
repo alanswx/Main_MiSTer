@@ -268,6 +268,7 @@ const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUT
 const char *joy_ana_map[] = { "    DPAD test: Press RIGHT", "    DPAD test: Press DOWN", "   Stick 1 Test: Tilt RIGHT", "   Stick 1 Test: Tilt DOWN", "   Stick 2 Test: Tilt RIGHT", "   Stick 2 Test: Tilt DOWN" };
 const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
 const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer"};
+const char *config_printer_models[] = { "         Auto", "ImageWriter II", "  Epson FX-80", "  Coleco Adam", "Commodore 803" };
 const char *config_midilink_mode[] = {"Local", "Local", "  USB", "  UDP", "-----", "-----", "  USB" };
 const char *config_afilter_msg[] = { "Internal","Custom" };
 const char *config_smask_msg[] = { "None", "1x", "2x", "1x Rotated", "2x Rotated" };
@@ -3626,6 +3627,14 @@ void HandleUI(void)
 				menumask |= 2;
 			}
 
+			if (mode == 7)
+			{
+				int pmodel = GetPrinterModel();
+				sprintf(s, " Printer:    %s", config_printer_models[pmodel]);
+				OsdWrite(m++, s, menusub == 1);
+				menumask |= 2;
+			}
+
 			if (mode == 3)
 			{
 				sprintf(s, " MidiLink:             %s", config_midilink_mode[midilink]);
@@ -3685,21 +3694,42 @@ void HandleUI(void)
 			case 1:
 				{
 					int mode = GetUARTMode();
-					int midilink = GetMidiLinkMode();
-					SetUARTMode(0);
-					if (minus)
+					if (mode == 4)
 					{
-						if (midilink <= 4) midilink = 6;
-						else midilink--;
+						int midilink = GetMidiLinkMode();
+						SetUARTMode(0);
+						if (minus)
+						{
+							if (midilink <= 4) midilink = 6;
+							else midilink--;
+						}
+						else
+						{
+							if (midilink >= 6) midilink = 4;
+							else midilink++;
+						}
+						SetMidiLinkMode(midilink);
+						SetUARTMode(mode);
+						menustate = MENU_UART1;
 					}
-					else
+					else if (mode == 7)
 					{
-						if (midilink >= 6) midilink = 4;
-						else midilink++;
+						int pmodel = GetPrinterModel();
+						SetUARTMode(0);
+						if (minus)
+						{
+							if (pmodel <= 0) pmodel = 4;
+							else pmodel--;
+						}
+						else
+						{
+							if (pmodel >= 4) pmodel = 0;
+							else pmodel++;
+						}
+						SetPrinterModel(pmodel);
+						SetUARTMode(mode);
+						menustate = MENU_UART1;
 					}
-					SetMidiLinkMode(midilink);
-					SetUARTMode(mode);
-					menustate = MENU_UART1;
 				}
 				break;
 
