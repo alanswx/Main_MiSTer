@@ -1339,6 +1339,37 @@ void ResetUART()
 	}
 }
 
+int GetPrinterModel()
+{
+	char model[32];
+	FILE *f = fopen("/tmp/PRINTER_MODEL", "r");
+	if (f)
+	{
+		if (fgets(model, sizeof(model), f))
+		{
+			fclose(f);
+			if (strstr(model, "imagewriter")) return 1;
+			if (strstr(model, "epson"))       return 2;
+			if (strstr(model, "adam"))        return 3;
+			if (strstr(model, "mps803"))      return 4;
+		}
+		else
+		{
+			fclose(f);
+		}
+	}
+	return 0; // 0 = Auto
+}
+
+void SetPrinterModel(int model)
+{
+	const char *names[] = { "auto", "imagewriter", "epson-tps", "adam", "mps803" };
+	if (model >= 0 && model <= 4)
+	{
+		MakeFile("/tmp/PRINTER_MODEL", names[model]);
+	}
+}
+
 uint16_t sdram_sz(int sz)
 {
 	int res = 0;
