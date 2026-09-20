@@ -255,6 +255,8 @@ void SetUARTMode(int mode);
 int GetMidiLinkMode();
 void SetMidiLinkMode(int mode);
 void ResetUART();
+int GetPrinterModel();
+void SetPrinterModel(int model);
 const uint32_t* GetUARTbauds(int mode);
 uint32_t GetUARTbaud(int mode);
 const char* GetUARTbaud_label(int mode);
