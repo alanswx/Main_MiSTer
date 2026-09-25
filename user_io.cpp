@@ -55,6 +55,7 @@ static fileTYPE sd_image[16] = {};
 static int      sd_type[16] = {};
 static unsigned char last_file_ext_idx = 0;
 static int      sd_image_cangrow[16] = {};
+static void mwb_flush(int disk);       // the Mac hard-disk write buffer, below
 static uint64_t buffer_lba[16] = { ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,
 								   ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,
 								   ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,
@@ -2206,6 +2207,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 	int len = strlen(name);
 	int img_type = 0; // disk image type (for C128 core): bit 0=dual sided, 1=raw GCR supported, 2=raw MFM supported, 3=high density
 
+	if (index < 4) mwb_flush(index);
 	sd_image_cangrow[index] = (pre != 0);
 	sd_type[index] = SD_TYPE_DEFAULT ;
 	if (len)
@@ -3332,6 +3334,83 @@ static void mdt_poll()
 	}
 }
 
+// Mac hard-disk write buffer (2026-09-25).  /media/fat is mounted sync and
+// images are opened O_SYNC, so every write() waits for the SD card: ~4 ms a
+// call almost regardless of size (512 B 3.97 ms, 16 KB 4.45 ms measured on
+// the box).  The Quadra 800's SCSI block cache flushes mostly single sectors,
+// in LBA order, so a Finder copy ran at ~250 KB/s with Main blocked in
+// write() for 11 of 12 s (docs/DISK_TRACE_20260925.md in the core repo).
+// For the Mac SCSI family's hard-disk slots, a write that continues the
+// buffered run is appended here and acknowledged at once; the run reaches the
+// card as one write() when it breaks, fills, might overlap a read, has been
+// idle MWB_IDLE_US, or the slot is remounted.  The durability window is those
+// 20 ms -- the core's own write-behind cache already acknowledges the guest
+// before the card has the data.
+#define MWB_MAX     (64 * 1024)
+#define MWB_IDLE_US 20000
+static uint8_t  mwb_data[4][MWB_MAX];
+static uint64_t mwb_off[4];               // image byte offset of the run
+static uint32_t mwb_len[4];               // bytes buffered (0 = empty)
+static uint64_t mwb_last[4];              // time of the last append
+static unsigned long mwb_stat_writes, mwb_stat_flushes;
+
+static int mwb_eligible(int disk)
+{
+	return disk >= 0 && disk < 4 && is_mac_scsi_family() &&
+		disk != mac_cdrom_slot() && disk != mac_toolbox_slot() && disk != mac_cd_toolbox_slot() &&
+		sd_image[disk].type != 2 && !sd_image_cangrow[disk] && sd_image[disk].size;
+}
+
+static void mwb_flush(int disk)
+{
+	if (disk < 0 || disk >= 4 || !mwb_len[disk]) return;
+	uint32_t len = mwb_len[disk];
+	mwb_len[disk] = 0;
+	diskled_on();
+	if (!FileSeek(&sd_image[disk], mwb_off[disk], SEEK_SET) ||
+		!FileWriteAdv(&sd_image[disk], mwb_data[disk], len))
+		printf("Mac write buffer: write of %u bytes at %llu on slot %d FAILED\n", len, (unsigned long long)mwb_off[disk], disk);
+	mwb_stat_flushes++;
+}
+
+// Returns 1 when the write was taken into the buffer (the caller skips its own write).
+static int mwb_write(int disk, uint64_t off, const uint8_t *data, uint32_t sz)
+{
+	if (!mwb_eligible(disk) || !sz || sz > MWB_MAX) { mwb_flush(disk); return 0; }
+	if (off + sz > (uint64_t)sd_image[disk].size) { mwb_flush(disk); return 0; }
+	if (mwb_len[disk] && (off != mwb_off[disk] + mwb_len[disk] || mwb_len[disk] + sz > MWB_MAX)) mwb_flush(disk);
+	if (!mwb_len[disk]) mwb_off[disk] = off;
+	memcpy(mwb_data[disk] + mwb_len[disk], data, sz);
+	mwb_len[disk] += sz;
+	mwb_last[disk] = mdt_us();
+	mwb_stat_writes++;
+	if (mwb_len[disk] == MWB_MAX) mwb_flush(disk);
+	return 1;
+}
+
+// A file read of [off, off+len) must see the buffered data: flush on overlap.
+static void mwb_before_read(int disk, uint64_t off, uint64_t len)
+{
+	if (disk < 0 || disk >= 4 || !mwb_len[disk]) return;
+	if (off < mwb_off[disk] + mwb_len[disk] && mwb_off[disk] < off + len) mwb_flush(disk);
+}
+
+void user_io_flush_write_buffers()
+{
+	for (int d = 0; d < 4; d++) mwb_flush(d);
+}
+
+static void mwb_poll()
+{
+	uint64_t now = 0;
+	for (int d = 0; d < 4; d++)
+	{
+		if (!mwb_len[d]) continue;
+		if (!now) now = mdt_us();
+		if (now - mwb_last[d] >= MWB_IDLE_US) mwb_flush(d);
+	}
+}
+
 void user_io_poll()
 {
 	#ifdef PROFILING
@@ -3423,6 +3502,7 @@ void user_io_poll()
 		mdplus_poll(); // MD+ CDDA poll
 
 		mdt_poll();
+		mwb_poll();
 		for (int i = 0; i < 4; i++)
 		{
 			int disk = -1;
@@ -3581,7 +3661,8 @@ void user_io_poll()
 					if (sz && lba <= size)
 					{
 						diskled_on();
-						if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET))
+						if (mwb_write(disk, lba * blksz, buffer[disk], sz)) ;   // buffered: reaches the card with its run
+						else if (FileSeek(&sd_image[disk], lba * blksz, SEEK_SET))
 						{
 							if (!sd_image_cangrow[disk])
 							{
@@ -3614,6 +3695,7 @@ void user_io_poll()
 
 				int done = 0;
 				uint32_t offset;
+				mwb_before_read(disk, lba * blksz, 2ULL * sizeof(buffer[disk]) + sz);
 
 				if ((buffer_lba[disk] == -1LLU) || lba < buffer_lba[disk] || (lba + blks - buffer_lba[disk]) > buf_n)
 				{
