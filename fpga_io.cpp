@@ -617,8 +617,10 @@ char *getappname()
 	return dest;
 }
 
+void user_io_flush_write_buffers();   // user_io.cpp: the Mac hard-disk write buffer
 void app_restart(const char *path, const char *xml, const char *exe)
 {
+	user_io_flush_write_buffers();
 	sync();
 	fpga_core_reset(1);
 

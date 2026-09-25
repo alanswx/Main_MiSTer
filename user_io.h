@@ -193,6 +193,7 @@ void user_io_status_reset();
 
 uint32_t user_io_get_file_crc();
 void user_io_write_gameid(const char *filename, uint32_t crc32_val = 0, const char *product_code = NULL);
+void user_io_flush_write_buffers();   // Mac hard-disk write buffer: drain before a restart
 int  user_io_file_mount(const char *name, unsigned char index = 0, char pre = 0, int pre_size = 0);
 void user_io_bufferinvalidate(unsigned char index);
 char *user_io_make_filepath(const char *path, const char *filename);
