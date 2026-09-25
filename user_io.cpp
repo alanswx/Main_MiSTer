@@ -3294,6 +3294,44 @@ static int coldreset_req = 0;
 
 static uint32_t res_timer = 0;
 
+// Mac disk trace (2026-09-25): per-request timing of the sector channel for
+// the disk-speed work.  Off unless /tmp/mac_disk_trace exists (checked every
+// 500 ms); records go to /tmp/mac_disk_trace.csv (RAM) through a 1 MB stdio
+// buffer, flushed when the flag file is removed.  Columns: request start (us,
+// CLOCK_MONOTONIC), slot, op (1 read, 2 write), lba, blocks, bytes, gap since
+// the previous request ended, SPI transfer us, file I/O us before the ack
+// (read miss / write), read-ahead file I/O us after the ack, read-miss flag.
+static FILE *mdt_f = 0;
+static uint64_t mdt_chk = 0, mdt_prev_end = 0;
+static char mdt_buf[1 << 20];
+static uint64_t mdt_us()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000;
+}
+static void mdt_poll()
+{
+	uint64_t now = mdt_us();
+	if (now - mdt_chk < 500000) return;
+	mdt_chk = now;
+	int want = !access("/tmp/mac_disk_trace", F_OK);
+	if (want && !mdt_f)
+	{
+		mdt_f = fopen("/tmp/mac_disk_trace.csv", "a");
+		if (mdt_f)
+		{
+			setvbuf(mdt_f, mdt_buf, _IOFBF, sizeof(mdt_buf));
+			fprintf(mdt_f, "t_us,slot,op,lba,blks,bytes,gap_us,spi_us,file_us,ra_us,miss\n");
+		}
+	}
+	else if (!want && mdt_f)
+	{
+		fclose(mdt_f);
+		mdt_f = 0;
+	}
+}
+
 void user_io_poll()
 {
 	#ifdef PROFILING
@@ -3384,11 +3422,14 @@ void user_io_poll()
 		if (is_snes() || is_sgb()) snes_poll();
 		mdplus_poll(); // MD+ CDDA poll
 
+		mdt_poll();
 		for (int i = 0; i < 4; i++)
 		{
 			int disk = -1;
 			int ack = 0;
 			int op = 0;
+			uint64_t mdt_t0 = 0, mdt_ts = 0, mdt_tf = 0, mdt_tr = 0;
+			int mdt_miss = 0;
 			static uint8_t buffer[16][UIO_BUFFER_SIZE];
 			uint64_t lba = 0;
 			uint32_t blksz, blks, sz;
@@ -3409,6 +3450,7 @@ void user_io_poll()
 				lba = spi_w(0);
 				lba = (lba & 0xFFFF) | (((uint32_t)spi_w(0)) << 16);
 				blks = ((c >> 9) & 0x3F) + 1;
+				if (mdt_f) mdt_t0 = mdt_us();
 				if (disk == 1 && is_psx())
 					blksz = 2352;
 				else if (disk == 0 && is_cdi())
@@ -3514,6 +3556,7 @@ void user_io_poll()
 				spi_w(UIO_SECTOR_WR | ack);
 				spi_block_read(buffer[disk], fio_size, sz);
 				DisableIO();
+				if (mdt_t0) mdt_ts = mdt_us();
 
 				if (sd_image[disk].type == 2 && !lba)
 				{
@@ -3548,6 +3591,7 @@ void user_io_poll()
 
 							if (sz) FileWriteAdv(&sd_image[disk], buffer[disk], sz);
 						}
+						if (mdt_t0) mdt_tf = mdt_us();
 					}
 				}
 			}
@@ -3599,6 +3643,7 @@ void user_io_poll()
 								buffer_lba[disk] = lba;
 							}
 						}
+						if (mdt_t0) { mdt_tf = mdt_us(); mdt_miss = 1; }
 					}
 
 					//Even after error we have to provide the block to the core
@@ -3655,6 +3700,7 @@ void user_io_poll()
 				spi_w(UIO_SECTOR_RD | ack);
 				spi_block_write(buffer[disk] + offset, fio_size, sz);
 				DisableIO();
+				if (mdt_t0) mdt_ts = mdt_us();
 
 				if (sd_image[disk].type == 2)
 				{
@@ -3678,6 +3724,7 @@ void user_io_poll()
 						FileReadAdv(&sd_image[disk], buffer[disk], sizeof(buffer[disk])))
 					{
 						buffer_lba[disk] = lba;
+						if (mdt_t0) mdt_tr = mdt_us();
 					}
 					else
 					{
@@ -3687,6 +3734,17 @@ void user_io_poll()
 				}
 			}
 			else break;
+			if (mdt_t0 && mdt_f)
+			{
+				uint64_t e = mdt_us();
+				fprintf(mdt_f, "%llu,%d,%d,%llu,%u,%u,%lld,%lld,%lld,%lld,%d\n",
+					(unsigned long long)mdt_t0, disk, op, (unsigned long long)lba, blks, sz,
+					mdt_prev_end ? (long long)(mdt_t0 - mdt_prev_end) : -1LL,
+					mdt_ts ? (long long)(mdt_ts - (mdt_miss ? mdt_tf : mdt_t0)) : -1LL,
+					mdt_tf ? (long long)(mdt_tf - (op == 2 ? mdt_ts : mdt_t0)) : -1LL,
+					mdt_tr ? (long long)(mdt_tr - mdt_ts) : -1LL, mdt_miss);
+				mdt_prev_end = e;
+			}
 		}
 	}
 
