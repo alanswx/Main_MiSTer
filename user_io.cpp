@@ -3346,12 +3346,19 @@ static void mdt_poll()
 // idle MWB_IDLE_US, or the slot is remounted.  The durability window is those
 // 20 ms -- the core's own write-behind cache already acknowledges the guest
 // before the card has the data.
-#define MWB_MAX     (64 * 1024)
+#define MWB_MAX     (64 * 1024)          // bytes per run
+#define MWB_RUNS    8                     // runs held per slot
 #define MWB_IDLE_US 20000
-static uint8_t  mwb_data[4][MWB_MAX];
-static uint64_t mwb_off[4];               // image byte offset of the run
-static uint32_t mwb_len[4];               // bytes buffered (0 = empty)
-static uint64_t mwb_last[4];              // time of the last append
+// A Finder copy interleaves its data with catalog, extents and bitmap
+// updates, so one run broke on every metadata write (490 flushes for a
+// 2.8 MB copy); several runs hold the data and the metadata apart (the
+// trace replay gives 182 with four, no fewer with more).  Runs never
+// overlap: a write inside a run updates it in place, a write that partly
+// overlaps one flushes it first, so the card ends up with the same bytes
+// in any flush order.
+struct mwb_run { uint64_t off; uint32_t len; uint64_t last; uint8_t data[MWB_MAX]; };
+static mwb_run  mwb[4][MWB_RUNS];
+static uint64_t mwb_last_any[4];
 static unsigned long mwb_stat_writes, mwb_stat_flushes;
 
 static int mwb_eligible(int disk)
@@ -3361,38 +3368,100 @@ static int mwb_eligible(int disk)
 		sd_image[disk].type != 2 && !sd_image_cangrow[disk] && sd_image[disk].size;
 }
 
+static void mwb_flush_run(int disk, mwb_run *r)
+{
+	uint32_t len = r->len;
+	if (!len) return;
+	r->len = 0;
+	diskled_on();
+	if (!FileSeek(&sd_image[disk], r->off, SEEK_SET) ||
+		!FileWriteAdv(&sd_image[disk], r->data, len))
+		printf("Mac write buffer: write of %u bytes at %llu on slot %d FAILED\n", len, (unsigned long long)r->off, disk);
+	mwb_stat_flushes++;
+}
+
+// every run of the slot, in LBA order
 static void mwb_flush(int disk)
 {
-	if (disk < 0 || disk >= 4 || !mwb_len[disk]) return;
-	uint32_t len = mwb_len[disk];
-	mwb_len[disk] = 0;
-	diskled_on();
-	if (!FileSeek(&sd_image[disk], mwb_off[disk], SEEK_SET) ||
-		!FileWriteAdv(&sd_image[disk], mwb_data[disk], len))
-		printf("Mac write buffer: write of %u bytes at %llu on slot %d FAILED\n", len, (unsigned long long)mwb_off[disk], disk);
-	mwb_stat_flushes++;
+	if (disk < 0 || disk >= 4) return;
+	for (;;)
+	{
+		mwb_run *lo = 0;
+		for (int i = 0; i < MWB_RUNS; i++)
+			if (mwb[disk][i].len && (!lo || mwb[disk][i].off < lo->off)) lo = &mwb[disk][i];
+		if (!lo) return;
+		mwb_flush_run(disk, lo);
+	}
+}
+
+static void mwb_flush_overlap(int disk, uint64_t off, uint64_t len)
+{
+	for (int i = 0; i < MWB_RUNS; i++)
+	{
+		mwb_run *r = &mwb[disk][i];
+		if (r->len && off < r->off + r->len && r->off < off + len) mwb_flush_run(disk, r);
+	}
 }
 
 // Returns 1 when the write was taken into the buffer (the caller skips its own write).
 static int mwb_write(int disk, uint64_t off, const uint8_t *data, uint32_t sz)
 {
-	if (!mwb_eligible(disk) || !sz || sz > MWB_MAX) { mwb_flush(disk); return 0; }
-	if (off + sz > (uint64_t)sd_image[disk].size) { mwb_flush(disk); return 0; }
-	if (mwb_len[disk] && (off != mwb_off[disk] + mwb_len[disk] || mwb_len[disk] + sz > MWB_MAX)) mwb_flush(disk);
-	if (!mwb_len[disk]) mwb_off[disk] = off;
-	memcpy(mwb_data[disk] + mwb_len[disk], data, sz);
-	mwb_len[disk] += sz;
-	mwb_last[disk] = mdt_us();
+	if (!mwb_eligible(disk) || !sz || sz > MWB_MAX || off + sz > (uint64_t)sd_image[disk].size)
+	{
+		if (disk >= 0 && disk < 4) mwb_flush(disk);
+		return 0;
+	}
+	uint64_t now = mdt_us();
+	mwb_run *free_r = 0, *lru = 0;
+	for (int i = 0; i < MWB_RUNS; i++)
+	{
+		mwb_run *r = &mwb[disk][i];
+		if (!r->len) { if (!free_r) free_r = r; continue; }
+		if (off >= r->off && off + sz <= r->off + r->len)          // a rewrite inside the run
+		{
+			memcpy(r->data + (off - r->off), data, sz);
+			r->last = mwb_last_any[disk] = now;
+			mwb_stat_writes++;
+			return 1;
+		}
+		if (off == r->off + r->len && r->len + sz <= MWB_MAX)      // continues the run
+		{
+			// the extension must not overlap another run, or two runs would
+			// hold different versions of the same bytes
+			for (int j = 0; j < MWB_RUNS; j++)
+			{
+				mwb_run *o = &mwb[disk][j];
+				if (o != r && o->len && off < o->off + o->len && o->off < off + sz) mwb_flush_run(disk, o);
+			}
+			memcpy(r->data + r->len, data, sz);
+			r->len += sz;
+			r->last = mwb_last_any[disk] = now;
+			mwb_stat_writes++;
+			if (r->len == MWB_MAX) mwb_flush_run(disk, r);
+			return 1;
+		}
+		if (!lru || r->last < lru->last) lru = r;
+	}
+	mwb_flush_overlap(disk, off, sz);
+	if (!free_r)
+	{
+		for (int i = 0; i < MWB_RUNS; i++) if (!mwb[disk][i].len) { free_r = &mwb[disk][i]; break; }
+		if (!free_r) { mwb_flush_run(disk, lru); free_r = lru; }
+	}
+	free_r->off = off;
+	free_r->len = sz;
+	memcpy(free_r->data, data, sz);
+	free_r->last = mwb_last_any[disk] = now;
 	mwb_stat_writes++;
-	if (mwb_len[disk] == MWB_MAX) mwb_flush(disk);
+	if (free_r->len == MWB_MAX) mwb_flush_run(disk, free_r);
 	return 1;
 }
 
-// A file read of [off, off+len) must see the buffered data: flush on overlap.
+// A file read of [off, off+len) must see the buffered data.
 static void mwb_before_read(int disk, uint64_t off, uint64_t len)
 {
-	if (disk < 0 || disk >= 4 || !mwb_len[disk]) return;
-	if (off < mwb_off[disk] + mwb_len[disk] && mwb_off[disk] < off + len) mwb_flush(disk);
+	if (disk < 0 || disk >= 4) return;
+	mwb_flush_overlap(disk, off, len);
 }
 
 void user_io_flush_write_buffers()
@@ -3405,9 +3474,11 @@ static void mwb_poll()
 	uint64_t now = 0;
 	for (int d = 0; d < 4; d++)
 	{
-		if (!mwb_len[d]) continue;
+		int any = 0;
+		for (int i = 0; i < MWB_RUNS; i++) any |= (mwb[d][i].len != 0);
+		if (!any) continue;
 		if (!now) now = mdt_us();
-		if (now - mwb_last[d] >= MWB_IDLE_US) mwb_flush(d);
+		if (now - mwb_last_any[d] >= MWB_IDLE_US) mwb_flush(d);
 	}
 }
 
