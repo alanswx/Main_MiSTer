@@ -251,10 +251,14 @@ uint16_t altcfg(int alt = -1);
 
 void MakeFile(const char * filename, const char * data);
 int GetUARTMode();
+bool is_printer_available();
+bool is_fujinet_available();
 void SetUARTMode(int mode);
 int GetMidiLinkMode();
 void SetMidiLinkMode(int mode);
 void ResetUART();
+int GetPrinterModel();
+void SetPrinterModel(int model);
 const uint32_t* GetUARTbauds(int mode);
 uint32_t GetUARTbaud(int mode);
 const char* GetUARTbaud_label(int mode);
