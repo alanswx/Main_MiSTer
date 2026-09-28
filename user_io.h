@@ -252,6 +252,7 @@ uint16_t altcfg(int alt = -1);
 
 void MakeFile(const char * filename, const char * data);
 int GetUARTMode();
+bool is_fujinet_available();
 void SetUARTMode(int mode);
 int GetMidiLinkMode();
 void SetMidiLinkMode(int mode);

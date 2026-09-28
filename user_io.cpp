@@ -1209,7 +1209,16 @@ int GetUARTMode()
 	if (!stat("/tmp/uartmode5", &filestat)) return 5;
 	if (!stat("/tmp/uartmode6", &filestat)) return 6;
 	if (!stat("/tmp/uartmode7", &filestat)) return 7;
+	if (!stat("/tmp/uartmode8", &filestat)) return 8;
 	return 0;
+}
+
+bool is_fujinet_available()
+{
+	return FileExists("/media/fat/fujinet/fujinet") ||
+	       FileExists("/media/fat/mister_fujinetd") ||
+	       FileExists("/media/fat/Scripts/fujinet") ||
+	       FileExists("/usr/local/bin/fujinet");
 }
 
 void SetUARTMode(int mode)
@@ -1826,6 +1835,7 @@ void user_io_init(const char *path, const char *xml)
 	SetUARTMode(0);
 	int midilink = (mode >> 8) & 0xFF;
 	int uartmode = mode & 0xFF;
+	if (uartmode == 8 && !is_fujinet_available()) uartmode = 0;
 	if (uartmode == 4 && (midilink < 4 || midilink>6)) midilink = 4;
 	if (uartmode == 3 && midilink > 3) midilink = 0;
 	if (uartmode < 3 || uartmode > 4) midilink = 0;

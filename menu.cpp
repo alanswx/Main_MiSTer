@@ -267,7 +267,7 @@ const char *config_button_turbo_choice_msg[] = { "A only", "B only", "A & B" };
 const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUTTON B", "BUTTON X", "BUTTON Y", "BUTTON L", "BUTTON R", "SELECT", "START", "KBD TOGGLE", "MENU", "    Stick 1: Tilt RIGHT", "    Stick 1: Tilt DOWN", "   Mouse emu X: Tilt RIGHT", "   Mouse emu Y: Tilt DOWN" };
 const char *joy_ana_map[] = { "    DPAD test: Press RIGHT", "    DPAD test: Press DOWN", "   Stick 1 Test: Tilt RIGHT", "   Stick 1 Test: Tilt DOWN", "   Stick 2 Test: Tilt RIGHT", "   Stick 2 Test: Tilt DOWN" };
 const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
-const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer"};
+const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer", "   FujiNet"};
 const char *config_printer_models[] = { "         Auto", "ImageWriter II", "  Epson FX-80", "  Coleco Adam", "Commodore 803" };
 const char *config_midilink_mode[] = {"Local", "Local", "  USB", "  UDP", "-----", "-----", "  USB" };
 const char *config_afilter_msg[] = { "Internal","Custom" };
@@ -3843,13 +3843,15 @@ void HandleUI(void)
 			bool udp_enabled = mode == 5;
 			// SNI is only selectable if playing SNES and snid is present
 			bool sni_enabled = (mode == 6) || (is_snes() && FileExists("/media/fat/snid"));
+			// FujiNet is only selectable if the fujinet daemon is installed
+			bool fujinet_enabled = (mode == 8) || is_fujinet_available();
 
-			uint32_t skipped = !udp_enabled + !sni_enabled;;
+			uint32_t skipped = !udp_enabled + !sni_enabled + !fujinet_enabled;
 
             for (uint32_t i = 0; i < 15; i++)
             {
 				// Skip drawing unselectable entries
-				while ((!udp_enabled && m == 5) || (!sni_enabled && m == 6))
+				while ((!udp_enabled && m == 5) || (!sni_enabled && m == 6) || (!fujinet_enabled && m == 8))
 				{
 					m++;
 				}
@@ -3964,7 +3966,9 @@ void HandleUI(void)
 					if (menusub == i)
 					{
 						ValidateUARTbaud(GetUARTMode(), bauds[i]);
-						if (GetUARTMode() >= 3)
+						// MIDI/Modem/UDP/SNI change speed through MidiLink; Printer and
+						// FujiNet are restarted by /sbin/uartmode at the new speed.
+						if (GetUARTMode() >= 3 && GetUARTMode() <= 6)
 						{
 							sprintf(s, "/sbin/mlinkutil BAUD %d", GetUARTbaud(GetUARTMode()));
 							system(s);
