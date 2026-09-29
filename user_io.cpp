@@ -1478,12 +1478,21 @@ int user_io_get_width()
 	return fio_size;
 }
 
+// Quadra 800 hard-disk tight service loop tunables (see mac_tl_wait below).
+static uint32_t mac_tl_spin_us = 250;
+static uint32_t mac_tl_budget_us = 2000;
+
 void user_io_init(const char *path, const char *xml)
 {
 	char *name;
 	static char mainpath[512];
 	core_name[0] = 0;
 	disable_osd = 0;
+
+	if (const char *e = getenv("MAC_SD_SPIN_US")) mac_tl_spin_us = strtoul(e, 0, 0);
+	if (const char *e = getenv("MAC_SD_BUDGET_US")) mac_tl_budget_us = strtoul(e, 0, 0);
+	if (getenv("MAC_SD_SPIN_US") || getenv("MAC_SD_BUDGET_US"))
+		printf("Mac SD tight loop: spin %u us, budget %u us\n", mac_tl_spin_us, mac_tl_budget_us);
 
 	// Clean up old game ID when loading a new core
 	unlink("/tmp/GAMEID");
@@ -3456,6 +3465,41 @@ void user_io_flush_write_buffers()
 	for (int d = 0; d < 4; d++) mwb_flush(d);
 }
 
+// Tight service loop for the Quadra 800's hard disks (docs/disk-main-path-20260928.md
+// and docs/perf/disk_tightloop_20260928/ in the MacQuadra800 core repo).  With
+// the core's SCSI block cache off every 512-byte sector is its own request,
+// and the core raises the next one only after the guest has drained (read)
+// or filled (write) the previous sector, ~110 us later.  The generic loop
+// below almost never sees it in the same pass, so each sector used to wait
+// a whole Main pass (mac_poll, input, video, OSD).  After serving a
+// hard-disk request on slot 0 or 1, spin on the SD status for up to
+// mac_tl_spin_us and keep serving while requests keep coming, for at most
+// mac_tl_budget_us per pass; the rest of Main then still runs at least once
+// per budget.  Environment overrides (read at core load): MAC_SD_SPIN_US
+// (0 = off, the old behaviour) and MAC_SD_BUDGET_US.
+static int mac_tl_disk(int disk)
+{
+	return mac_tl_spin_us && (disk == 0 || disk == 1) && is_mac_scsi_optimized() &&
+		disk != mac_cdrom_slot() && disk != mac_toolbox_slot() && disk != mac_cd_toolbox_slot();
+}
+
+// 1 when the core raises a request (any slot) within mac_tl_spin_us, 0 on a
+// timeout or once the pass has served disks for mac_tl_budget_us since
+// start.  The one-word UIO_GET_SDSTAT has no side effect in hps_io (its
+// round-robin advances on the second word, which only the full status read
+// in the loop sends).
+static int mac_tl_wait(uint64_t start)
+{
+	uint64_t t0 = mwb_us();
+	if (t0 - start >= mac_tl_budget_us) return 0;
+	for (;;)
+	{
+		uint16_t c = spi_uio_cmd(UIO_GET_SDSTAT);
+		if ((c & 0x8000) && (c & 3)) return 1;
+		if (mwb_us() - t0 >= mac_tl_spin_us) return 0;
+	}
+}
+
 static void mwb_poll()
 {
 	uint64_t now = 0;
@@ -3560,8 +3604,15 @@ void user_io_poll()
 		mdplus_poll(); // MD+ CDDA poll
 
 		mwb_poll();
-		for (int i = 0; i < 4; i++)
+		uint64_t tl_start = 0;   // first Mac hard-disk service of this pass
+		int tl_armed = 0;        // the previous iteration served one
+		for (int i = 0; i < 4 || tl_armed; i++)
 		{
+			if (tl_armed)
+			{
+				tl_armed = 0;
+				if (!mac_tl_wait(tl_start)) break;
+			}
 			int disk = -1;
 			int ack = 0;
 			int op = 0;
@@ -3869,6 +3920,12 @@ void user_io_poll()
 				}
 			}
 			else break;
+
+			if (op && mac_tl_disk(disk))
+			{
+				if (!tl_start) tl_start = mwb_us();
+				tl_armed = 1;
+			}
 		}
 	}
 
