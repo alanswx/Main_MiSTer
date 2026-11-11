@@ -710,6 +710,7 @@ static int use_cheats = 0;
 static uint32_t ss_base = 0;
 static uint32_t ss_size = 0;
 static uint32_t uart_speeds[13] = {};
+static bool uart_speeds_declared = false; // the core listed its own speeds (UARTnnn:...)
 static char uart_speed_labels[13][32] = {};
 static uint32_t midi_speeds[13] = {};
 static char midi_speed_labels[13][32] = {};
@@ -776,6 +777,7 @@ static void parse_config()
 				if (!strncasecmp(p, "UART", 4))
 				{
 					p += 4;
+					uart_speeds_declared = true;
 					for (int i = 0; i < 10 && p && *p; i++)
 					{
 						char *end = 0;
@@ -1256,11 +1258,23 @@ static int midi_speed_idx = 0;
 static int mlink_speed_idx = 0;
 
 // MIDI (3) has its own list. Modem/UDP/SNI/Printer (4-7) use the MidiLink list.
-// FujiNet (8) talks to the core itself, like PPP/Console, so it uses the speeds the
-// core declares in its CONF_STR (UARTnnn:...), and shares their index.
+// FujiNet (8) talks to the core itself, so it uses the speeds the core declares in
+// its CONF_STR (UARTnnn:...), sharing the PPP/Console index, when that list reaches
+// 115200 or more (Studio-II: 1562500, Adam: 115200). A core whose list stops lower
+// (CoCo3 declares 19200 and below for its 6551) keeps the MidiLink list, which has
+// the 115200 its FujiNet setup uses.
+static bool uart_fujinet_core_speeds()
+{
+	if (!uart_speeds_declared) return false;
+	for (int i = 0; i < 13 && uart_speeds[i]; i++)
+		if (uart_speeds[i] >= 115200) return true;
+	return false;
+}
+
 static bool uart_is_mlink(int mode)
 {
-	return mode > 3 && mode != 8;
+	if (mode == 8) return !uart_fujinet_core_speeds();
+	return mode > 3;
 }
 
 const uint32_t* GetUARTbauds(int mode)
