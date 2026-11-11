@@ -1213,12 +1213,19 @@ int GetUARTMode()
 	return 0;
 }
 
+// Each core has its own FujiNet install, named after the core:
+// /media/fat/fujinet/<corename>/ holding the FujiNet-PC daemon (fujinet) or,
+// for a core that needs more than one program, a launch script. /sbin/uartmode
+// starts whichever is there; FujiNet is offered only when this core has one.
 bool is_fujinet_available()
 {
-	return FileExists("/media/fat/fujinet/fujinet") ||
-	       FileExists("/media/fat/mister_fujinetd") ||
-	       FileExists("/media/fat/Scripts/fujinet") ||
-	       FileExists("/usr/local/bin/fujinet");
+	char path[256];
+	const char *core = user_io_get_core_name();
+	if (!core || !*core) return false;
+	snprintf(path, sizeof(path), "/media/fat/fujinet/%s/fujinet", core);
+	if (FileExists(path)) return true;
+	snprintf(path, sizeof(path), "/media/fat/fujinet/%s/launch", core);
+	return FileExists(path);
 }
 
 void SetUARTMode(int mode)
@@ -1248,29 +1255,37 @@ static int uart_speed_idx = 0;
 static int midi_speed_idx = 0;
 static int mlink_speed_idx = 0;
 
+// MIDI (3) has its own list. Modem/UDP/SNI/Printer (4-7) use the MidiLink list.
+// FujiNet (8) talks to the core itself, like PPP/Console, so it uses the speeds the
+// core declares in its CONF_STR (UARTnnn:...), and shares their index.
+static bool uart_is_mlink(int mode)
+{
+	return mode > 3 && mode != 8;
+}
+
 const uint32_t* GetUARTbauds(int mode)
 {
-	return (mode == 3) ? midi_speeds : (mode > 3) ? mlink_speeds : uart_speeds;
+	return (mode == 3) ? midi_speeds : uart_is_mlink(mode) ? mlink_speeds : uart_speeds;
 }
 
 uint32_t GetUARTbaud(int mode)
 {
-	return (mode == 3) ? midi_speeds[midi_speed_idx] : (mode > 3) ? mlink_speeds[mlink_speed_idx] : uart_speeds[uart_speed_idx];
+	return (mode == 3) ? midi_speeds[midi_speed_idx] : uart_is_mlink(mode) ? mlink_speeds[mlink_speed_idx] : uart_speeds[uart_speed_idx];
 }
 
 const char* GetUARTbaud_label(int mode)
 {
-	return (mode == 3) ? midi_speed_labels[midi_speed_idx] : (mode > 3) ? mlink_speed_labels[mlink_speed_idx] : uart_speed_labels[uart_speed_idx];
+	return (mode == 3) ? midi_speed_labels[midi_speed_idx] : uart_is_mlink(mode) ? mlink_speed_labels[mlink_speed_idx] : uart_speed_labels[uart_speed_idx];
 }
 
 const char* GetUARTbaud_label(int mode, int idx)
 {
-	return (mode == 3) ? midi_speed_labels[idx] : (mode > 3) ? mlink_speed_labels[idx] : uart_speed_labels[idx];
+	return (mode == 3) ? midi_speed_labels[idx] : uart_is_mlink(mode) ? mlink_speed_labels[idx] : uart_speed_labels[idx];
 }
 
 int GetUARTbaud_idx(int mode)
 {
-	return (mode == 3) ? midi_speed_idx : (mode > 3) ? mlink_speed_idx : uart_speed_idx;
+	return (mode == 3) ? midi_speed_idx : uart_is_mlink(mode) ? mlink_speed_idx : uart_speed_idx;
 }
 
 char * GetMidiLinkSoundfont()
@@ -1310,7 +1325,7 @@ uint32_t ValidateUARTbaud(int mode, uint32_t baud)
 	}
 
 	if (mode == 3) midi_speed_idx = idx;
-	else if (mode > 3) mlink_speed_idx = idx;
+	else if (uart_is_mlink(mode)) mlink_speed_idx = idx;
 	else uart_speed_idx = idx;
 
 	return bauds[idx];
